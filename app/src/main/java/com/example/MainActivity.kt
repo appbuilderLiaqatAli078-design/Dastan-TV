@@ -80,11 +80,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // Default FLAG_SECURE enabled for stream screen protection on supported Android surfaces
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
-        )
         setContent {
             MyApplicationTheme {
                 DastanRootApp(

@@ -56,7 +56,7 @@ class DastanViewModel(
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
-    private val _flagSecureEnabled = MutableStateFlow(true)
+    private val _flagSecureEnabled = MutableStateFlow(false)
     val flagSecureEnabled: StateFlow<Boolean> = _flagSecureEnabled.asStateFlow()
 
     val userProfile: StateFlow<UserProfile?> = repository.observeUserProfile(currentUserId)
