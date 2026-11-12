@@ -1,0 +1,6 @@
+{
+  "name": "Dastan TV",
+  "description": "Premium Midnight Cinema OTT streaming platform for Urdu-dubbed Turkish dramas with role-based User and Admin workspaces.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

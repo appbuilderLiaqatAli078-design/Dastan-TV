@@ -1,0 +1,421 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile, role assignment, and membership status.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Matches Firebase Auth UID."
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address from Google Sign-In."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name."
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Profile avatar URL."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "admin"],
+          "description": "Role-based access control tier."
+        },
+        "membershipPlan": {
+          "type": "string",
+          "enum": ["FREE", "YEARLY_VIP"],
+          "description": "Current membership entitlement tier."
+        },
+        "preferredQuality": {
+          "type": "string",
+          "enum": ["AUTO", "1080P", "720P", "480P"],
+          "description": "Preferred stream playback quality."
+        },
+        "subtitleEnabled": {
+          "type": "boolean",
+          "description": "Whether Urdu subtitles/captions overlay is enabled by default."
+        },
+        "isBlocked": {
+          "type": "boolean",
+          "description": "Admin moderation flag."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "email",
+        "displayName",
+        "role",
+        "membershipPlan",
+        "preferredQuality",
+        "subtitleEnabled",
+        "isBlocked",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FavoriteItem": {
+      "title": "FavoriteItem",
+      "description": "Drama series or episode saved to a user's personal Favorites list.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "dramaId": {
+          "type": "string",
+          "description": "Category ID or Drama identifier."
+        },
+        "title": {
+          "type": "string",
+          "description": "Drama or episode display title."
+        },
+        "posterUrl": {
+          "type": "string",
+          "description": "Poster artwork URL."
+        },
+        "episodeCount": {
+          "type": "integer",
+          "description": "Number of available episodes."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "dramaId",
+        "title",
+        "posterUrl",
+        "episodeCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WatchHistoryItem": {
+      "title": "WatchHistoryItem",
+      "description": "User playback progress for Continue Watching and Watch History.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "episodeId": {
+          "type": "string",
+          "description": "WordPress post ID for the episode."
+        },
+        "categoryId": {
+          "type": "integer",
+          "description": "WordPress category ID for the parent drama."
+        },
+        "episodeTitle": {
+          "type": "string",
+          "description": "Episode title."
+        },
+        "dramaTitle": {
+          "type": "string",
+          "description": "Parent drama title."
+        },
+        "posterUrl": {
+          "type": "string",
+          "description": "Episode thumbnail/poster URL."
+        },
+        "embedUrl": {
+          "type": "string",
+          "description": "Authorized video embed URL."
+        },
+        "progressMs": {
+          "type": "integer",
+          "description": "Playback position in milliseconds."
+        },
+        "durationMs": {
+          "type": "integer",
+          "description": "Total estimated duration in milliseconds."
+        },
+        "completed": {
+          "type": "boolean",
+          "description": "Whether the episode has been finished."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "episodeId",
+        "categoryId",
+        "episodeTitle",
+        "dramaTitle",
+        "posterUrl",
+        "embedUrl",
+        "progressMs",
+        "durationMs",
+        "completed",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SavedEpisodeItem": {
+      "title": "SavedEpisodeItem",
+      "description": "Saved episode metadata in user's Downloads/Offline Metadata vault.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "episodeId": {
+          "type": "string",
+          "description": "Episode identifier."
+        },
+        "categoryId": {
+          "type": "integer",
+          "description": "Parent drama category ID."
+        },
+        "title": {
+          "type": "string",
+          "description": "Episode title."
+        },
+        "dramaName": {
+          "type": "string",
+          "description": "Drama series name."
+        },
+        "posterUrl": {
+          "type": "string",
+          "description": "Poster URL."
+        },
+        "embedUrl": {
+          "type": "string",
+          "description": "Authorized video embed URL."
+        },
+        "synopsis": {
+          "type": "string",
+          "description": "Cached episode synopsis for offline reading."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp."
+        }
+      },
+      "required": [
+        "userId",
+        "episodeId",
+        "categoryId",
+        "title",
+        "dramaName",
+        "posterUrl",
+        "embedUrl",
+        "synopsis",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CatalogOverride": {
+      "title": "CatalogOverride",
+      "description": "Admin-managed visibility, featuring, VIP gating, and metadata overrides for dramas, episodes, categories, and home banners.",
+      "type": "object",
+      "properties": {
+        "appId": {
+          "type": "string",
+          "enum": ["dastan_tv"],
+          "description": "Mandatory tenant scope identifier for query alignment."
+        },
+        "targetType": {
+          "type": "string",
+          "enum": ["DRAMA", "EPISODE", "CATEGORY", "BANNER"],
+          "description": "Type of catalog entity being controlled."
+        },
+        "targetId": {
+          "type": "string",
+          "description": "Target category ID, post ID, or banner ID."
+        },
+        "customTitle": {
+          "type": "string",
+          "description": "Overridden title."
+        },
+        "customDescription": {
+          "type": "string",
+          "description": "Overridden description or synopsis."
+        },
+        "customPosterUrl": {
+          "type": "string",
+          "description": "Overridden poster or banner URL."
+        },
+        "isHidden": {
+          "type": "boolean",
+          "description": "If true, hidden from non-admin users."
+        },
+        "isFeatured": {
+          "type": "boolean",
+          "description": "If true, promoted in Featured Turkish Dramas / Hero carousel."
+        },
+        "isVipOnly": {
+          "type": "boolean",
+          "description": "If true, requires YEARLY_VIP membership for early/exclusive access."
+        },
+        "priorityOrder": {
+          "type": "integer",
+          "description": "Display sorting priority."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "Admin UID who performed the change."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "appId",
+        "targetType",
+        "targetId",
+        "customTitle",
+        "customDescription",
+        "customPosterUrl",
+        "isHidden",
+        "isFeatured",
+        "isVipOnly",
+        "priorityOrder",
+        "updatedBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AppConfig": {
+      "title": "AppConfig",
+      "description": "Global application settings and API sync status managed by Admin.",
+      "type": "object",
+      "properties": {
+        "appId": {
+          "type": "string",
+          "enum": ["dastan_tv"],
+          "description": "Tenant identifier."
+        },
+        "announcementBanner": {
+          "type": "string",
+          "description": "Global announcement shown on Home screen."
+        },
+        "maintenanceMode": {
+          "type": "boolean",
+          "description": "Whether normal user streaming is paused for maintenance."
+        },
+        "yearlyVipPricePkr": {
+          "type": "integer",
+          "description": "Display price for Yearly VIP plan."
+        },
+        "paymentGatewayEnabled": {
+          "type": "boolean",
+          "description": "Keep false until payment gateway is activated."
+        },
+        "lastApiSyncEpochMs": {
+          "type": "integer",
+          "description": "Epoch ms of last admin API synchronization."
+        },
+        "lastApiLatencyMs": {
+          "type": "integer",
+          "description": "Last measured WordPress API latency in ms."
+        },
+        "lastApiHealthy": {
+          "type": "boolean",
+          "description": "Whether the last API health check succeeded."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "Admin UID."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "appId",
+        "announcementBanner",
+        "maintenanceMode",
+        "yearlyVipPricePkr",
+        "paymentGatewayEnabled",
+        "lastApiSyncEpochMs",
+        "lastApiLatencyMs",
+        "lastApiHealthy",
+        "updatedBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles and membership entitlements."
+    },
+    "/users/{userId}/favorites/{dramaId}": {
+      "schema": { "$ref": "#/entities/FavoriteItem" },
+      "description": "User's favorite Turkish dramas."
+    },
+    "/users/{userId}/watch_history/{episodeId}": {
+      "schema": { "$ref": "#/entities/WatchHistoryItem" },
+      "description": "User's episode playback history and Continue Watching progress."
+    },
+    "/users/{userId}/downloads/{episodeId}": {
+      "schema": { "$ref": "#/entities/SavedEpisodeItem" },
+      "description": "User's saved episodes and offline synopsis bookmarks."
+    },
+    "/catalog_overrides/{overrideId}": {
+      "schema": { "$ref": "#/entities/CatalogOverride" },
+      "description": "Admin overrides for drama visibility, featuring, descriptions, and banners."
+    },
+    "/app_config/{configId}": {
+      "schema": { "$ref": "#/entities/AppConfig" },
+      "description": "Admin-managed global app configuration and API health telemetry."
+    }
+  }
+}

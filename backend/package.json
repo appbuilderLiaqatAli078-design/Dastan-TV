@@ -1,0 +1,22 @@
+{
+  "name": "dastan-tv-nextjs-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Secure Next.js API gateway, caching layer, and Firebase Admin role provisioner for Dastan TV OTT",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "set-admin": "ts-node scripts/set-admin-role.ts"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.5.0",
+    "next": "^14.2.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4"
+  }
+}

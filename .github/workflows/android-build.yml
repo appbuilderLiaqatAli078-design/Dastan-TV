@@ -1,0 +1,63 @@
+name: Dastan TV Android CI/CD Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Test, Lint, and Build APK & AAB
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Decode or Generate Debug Keystore for CI
+        run: |
+          if [ -f debug.keystore.base64 ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          elif [ ! -f debug.keystore ]; then
+            keytool -genkeypair -v -keystore debug.keystore -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Run Unit Tests
+        run: gradle :app:testDebugUnitTest --tests com.example.ExampleUnitTest
+
+      - name: Run Android Lint Check
+        run: gradle :app:lintDebug
+
+      - name: Build Debug APK
+        run: gradle :app:assembleDebug
+
+      - name: Build Release App Bundle (AAB)
+        run: gradle :app:bundleDebug
+
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dastan-tv-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload Android AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dastan-tv-bundle-aab
+          path: app/build/outputs/bundle/debug/*.aab
+          if-no-files-found: warn

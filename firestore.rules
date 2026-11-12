@@ -1,0 +1,332 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core security helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email_verified == true && (
+          request.auth.token.email == 'rdxkinglucky@gmail.com' ||
+          request.auth.token.email == 'appbuilder078@gmail.com'
+        ))
+      );
+    }
+
+    // Validation Helpers
+    function isValidAdminDoc(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
+             data.keys().hasOnly(['uid', 'email', 'createdAt', 'updatedAt']) &&
+             data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 200 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             (!('updatedAt' in data) || (data.updatedAt is timestamp && data.updatedAt <= request.time));
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll([
+               'userId', 'email', 'displayName', 'photoUrl', 'role',
+               'membershipPlan', 'preferredQuality', 'subtitleEnabled',
+               'isBlocked', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'email', 'displayName', 'photoUrl', 'role',
+               'membershipPlan', 'preferredQuality', 'subtitleEnabled',
+               'isBlocked', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.email is string && data.email.size() <= 200 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+             data.photoUrl is string && data.photoUrl.size() <= 500 &&
+             (data.role == 'user' || data.role == 'admin') &&
+             (data.membershipPlan == 'FREE' || data.membershipPlan == 'YEARLY_VIP') &&
+             (data.preferredQuality == 'AUTO' || data.preferredQuality == '1080P' || data.preferredQuality == '720P' || data.preferredQuality == '480P') &&
+             data.subtitleEnabled is bool &&
+             data.isBlocked is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidFavoriteItem(data, uid) {
+      return data.keys().hasAll([
+               'userId', 'dramaId', 'title', 'posterUrl', 'episodeCount', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'dramaId', 'title', 'posterUrl', 'episodeCount', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == uid &&
+             data.dramaId is string && data.dramaId.size() >= 1 && data.dramaId.size() <= 128 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+             data.posterUrl is string && data.posterUrl.size() <= 500 &&
+             data.episodeCount is int && data.episodeCount >= 0 && data.episodeCount <= 10000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidWatchHistoryItem(data, uid) {
+      return data.keys().hasAll([
+               'userId', 'episodeId', 'categoryId', 'episodeTitle', 'dramaTitle',
+               'posterUrl', 'embedUrl', 'progressMs', 'durationMs', 'completed',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'episodeId', 'categoryId', 'episodeTitle', 'dramaTitle',
+               'posterUrl', 'embedUrl', 'progressMs', 'durationMs', 'completed',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == uid &&
+             data.episodeId is string && data.episodeId.size() >= 1 && data.episodeId.size() <= 128 &&
+             data.categoryId is int && data.categoryId >= 0 &&
+             data.episodeTitle is string && data.episodeTitle.size() >= 1 && data.episodeTitle.size() <= 300 &&
+             data.dramaTitle is string && data.dramaTitle.size() >= 1 && data.dramaTitle.size() <= 200 &&
+             data.posterUrl is string && data.posterUrl.size() <= 500 &&
+             data.embedUrl is string && data.embedUrl.size() <= 500 &&
+             data.progressMs is int && data.progressMs >= 0 &&
+             data.durationMs is int && data.durationMs >= 0 &&
+             data.completed is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSavedEpisodeItem(data, uid) {
+      return data.keys().hasAll([
+               'userId', 'episodeId', 'categoryId', 'title', 'dramaName',
+               'posterUrl', 'embedUrl', 'synopsis', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'episodeId', 'categoryId', 'title', 'dramaName',
+               'posterUrl', 'embedUrl', 'synopsis', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == uid &&
+             data.episodeId is string && data.episodeId.size() >= 1 && data.episodeId.size() <= 128 &&
+             data.categoryId is int && data.categoryId >= 0 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 300 &&
+             data.dramaName is string && data.dramaName.size() >= 1 && data.dramaName.size() <= 200 &&
+             data.posterUrl is string && data.posterUrl.size() <= 500 &&
+             data.embedUrl is string && data.embedUrl.size() <= 500 &&
+             data.synopsis is string && data.synopsis.size() <= 2000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCatalogOverride(data) {
+      return data.keys().hasAll([
+               'appId', 'targetType', 'targetId', 'customTitle', 'customDescription',
+               'customPosterUrl', 'isHidden', 'isFeatured', 'isVipOnly',
+               'priorityOrder', 'updatedBy', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'appId', 'targetType', 'targetId', 'customTitle', 'customDescription',
+               'customPosterUrl', 'isHidden', 'isFeatured', 'isVipOnly',
+               'priorityOrder', 'updatedBy', 'createdAt', 'updatedAt'
+             ]) &&
+             data.appId == 'dastan_tv' &&
+             (data.targetType == 'DRAMA' || data.targetType == 'EPISODE' || data.targetType == 'CATEGORY' || data.targetType == 'BANNER') &&
+             data.targetId is string && data.targetId.size() >= 1 && data.targetId.size() <= 128 &&
+             data.customTitle is string && data.customTitle.size() <= 300 &&
+             data.customDescription is string && data.customDescription.size() <= 3000 &&
+             data.customPosterUrl is string && data.customPosterUrl.size() <= 500 &&
+             data.isHidden is bool &&
+             data.isFeatured is bool &&
+             data.isVipOnly is bool &&
+             data.priorityOrder is int && data.priorityOrder >= 0 && data.priorityOrder <= 10000 &&
+             data.updatedBy is string && data.updatedBy == request.auth.uid &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAppConfig(data) {
+      return data.keys().hasAll([
+               'appId', 'announcementBanner', 'maintenanceMode', 'yearlyVipPricePkr',
+               'paymentGatewayEnabled', 'lastApiSyncEpochMs', 'lastApiLatencyMs',
+               'lastApiHealthy', 'updatedBy', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'appId', 'announcementBanner', 'maintenanceMode', 'yearlyVipPricePkr',
+               'paymentGatewayEnabled', 'lastApiSyncEpochMs', 'lastApiLatencyMs',
+               'lastApiHealthy', 'updatedBy', 'createdAt', 'updatedAt'
+             ]) &&
+             data.appId == 'dastan_tv' &&
+             data.announcementBanner is string && data.announcementBanner.size() <= 500 &&
+             data.maintenanceMode is bool &&
+             data.yearlyVipPricePkr is int && data.yearlyVipPricePkr >= 0 && data.yearlyVipPricePkr <= 1000000 &&
+             data.paymentGatewayEnabled is bool &&
+             data.lastApiSyncEpochMs is int && data.lastApiSyncEpochMs >= 0 &&
+             data.lastApiLatencyMs is int && data.lastApiLatencyMs >= 0 &&
+             data.lastApiHealthy is bool &&
+             data.updatedBy is string && data.updatedBy == request.auth.uid &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // 1. Admins collection
+    match /admins/{adminUid} {
+      allow get: if isSignedIn() && isValidId(adminUid) && (request.auth.uid == adminUid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidId(adminUid) && isValidAdminDoc(incoming());
+      allow update: if isAdmin() && isValidId(adminUid) && isValidAdminDoc(incoming()) &&
+                       incoming().uid == existing().uid &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(adminUid);
+    }
+
+    // 2. Users collection (PII isolated to owner or admin)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       isValidUserProfile(incoming()) &&
+                       (
+                         (incoming().role == 'user' && incoming().membershipPlan == 'FREE' && incoming().isBlocked == false) ||
+                         isAdmin()
+                       );
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         (
+                           request.auth.uid == userId &&
+                           incoming().role == existing().role &&
+                           incoming().membershipPlan == existing().membershipPlan &&
+                           incoming().isBlocked == existing().isBlocked &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'displayName', 'photoUrl', 'preferredQuality', 'subtitleEnabled', 'updatedAt'
+                           ])
+                         ) ||
+                         (
+                           isAdmin() &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'displayName', 'photoUrl', 'role', 'membershipPlan',
+                             'preferredQuality', 'subtitleEnabled', 'isBlocked', 'updatedAt'
+                           ])
+                         )
+                       );
+
+      allow delete: if isAdmin() && isValidId(userId);
+
+      // 2a. User Favorites subcollection
+      match /favorites/{dramaId} {
+        allow get: if isOwner(userId) && isValidId(dramaId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(dramaId) && isValidFavoriteItem(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(dramaId) &&
+                         isValidFavoriteItem(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().dramaId == existing().dramaId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'title', 'posterUrl', 'episodeCount', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(dramaId);
+      }
+
+      // 2b. User Watch History subcollection
+      match /watch_history/{episodeId} {
+        allow get: if isOwner(userId) && isValidId(episodeId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(episodeId) && isValidWatchHistoryItem(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(episodeId) &&
+                         isValidWatchHistoryItem(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().episodeId == existing().episodeId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'episodeTitle', 'dramaTitle', 'posterUrl', 'embedUrl',
+                           'progressMs', 'durationMs', 'completed', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(episodeId);
+      }
+
+      // 2c. User Downloads / Saved Episodes subcollection
+      match /downloads/{episodeId} {
+        allow get: if isOwner(userId) && isValidId(episodeId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(episodeId) && isValidSavedEpisodeItem(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(episodeId) &&
+                         isValidSavedEpisodeItem(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().episodeId == existing().episodeId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'title', 'dramaName', 'posterUrl', 'embedUrl', 'synopsis', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(episodeId);
+      }
+    }
+
+    // 3. Catalog Overrides collection (Read by authenticated users with appId filter; Write by Admin only)
+    match /catalog_overrides/{overrideId} {
+      allow get: if isSignedIn() && isValidId(overrideId) && existing().appId == 'dastan_tv';
+      allow list: if isSignedIn() && existing().appId == 'dastan_tv';
+      allow create: if isAdmin() && isValidId(overrideId) && isValidCatalogOverride(incoming());
+      allow update: if isAdmin() &&
+                       isValidId(overrideId) &&
+                       isValidCatalogOverride(incoming()) &&
+                       incoming().appId == existing().appId &&
+                       incoming().targetType == existing().targetType &&
+                       incoming().targetId == existing().targetId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'customTitle', 'customDescription', 'customPosterUrl',
+                         'isHidden', 'isFeatured', 'isVipOnly', 'priorityOrder',
+                         'updatedBy', 'updatedAt'
+                       ]);
+      allow delete: if isAdmin() && isValidId(overrideId);
+    }
+
+    // 4. App Configuration collection (Read by authenticated users; Write by Admin only)
+    match /app_config/{configId} {
+      allow get: if isSignedIn() && isValidId(configId);
+      allow list: if isSignedIn() && existing().appId == 'dastan_tv';
+      allow create: if isAdmin() && isValidId(configId) && isValidAppConfig(incoming());
+      allow update: if isAdmin() &&
+                       isValidId(configId) &&
+                       isValidAppConfig(incoming()) &&
+                       incoming().appId == existing().appId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'announcementBanner', 'maintenanceMode', 'yearlyVipPricePkr',
+                         'paymentGatewayEnabled', 'lastApiSyncEpochMs', 'lastApiLatencyMs',
+                         'lastApiHealthy', 'updatedBy', 'updatedAt'
+                       ]);
+      allow delete: if isAdmin() && isValidId(configId);
+    }
+  }
+}
