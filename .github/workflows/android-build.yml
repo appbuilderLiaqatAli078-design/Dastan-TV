@@ -1,15 +1,19 @@
-name: Dastan TV Android CI/CD Build
+name: Dastan TV Android CI/CD Build & Release
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-and-test:
-    name: Test, Lint, and Build APK & AAB
+    name: Test, Lint, Build & Publish Release APK/AAB
     runs-on: ubuntu-latest
 
     steps:
@@ -119,16 +123,45 @@ jobs:
       - name: Build Release App Bundle (AAB)
         run: gradle :app:bundleDebug
 
+      - name: Prepare Release Files
+        run: |
+          mkdir -p release-assets
+          cp app/build/outputs/apk/debug/*.apk "release-assets/Dastan-TV-v1.0.${{ github.run_number }}.apk"
+          cp app/build/outputs/apk/debug/*.apk "release-assets/Dastan-TV-latest.apk"
+          if ls app/build/outputs/bundle/debug/*.aab 1> /dev/null 2>&1; then
+            cp app/build/outputs/bundle/debug/*.aab "release-assets/Dastan-TV-v1.0.${{ github.run_number }}.aab"
+          fi
+
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: dastan-tv-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: release-assets/*.apk
           if-no-files-found: error
 
       - name: Upload Android AAB Artifact
         uses: actions/upload-artifact@v4
         with:
           name: dastan-tv-bundle-aab
-          path: app/build/outputs/bundle/debug/*.aab
+          path: release-assets/*.aab
           if-no-files-found: warn
+
+      - name: Publish APK & AAB to GitHub Releases
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Dastan TV v1.0.${{ github.run_number }} (APK & AAB)"
+          body: |
+            ## Dastan TV - Premium Turkish Drama OTT (Build #${{ github.run_number }})
+            - **Developer:** Liaquat Ali
+            - **Package ID:** `com.aistudio.dastantv.mrvkpx`
+            - **Direct APK Download:** Download `Dastan-TV-latest.apk` or `Dastan-TV-v1.0.${{ github.run_number }}.apk` below to install on Android devices.
+          files: |
+            release-assets/*.apk
+            release-assets/*.aab
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
