@@ -120,6 +120,100 @@ class WordPressContentRepository(context: Context? = null) {
             val hasExplicitSeason: Boolean
         )
 
+        data class ResolvedStreamInfo(
+            val originalEmbedUrl: String,
+            val resolvedPlaybackUrl: String,
+            val isDirectMediaStream: Boolean,
+            val providerName: String,
+            val durationSeconds: Int = 0,
+            val requiredReferer: String = "https://giveme5.co/",
+            val backupDirectUrls: List<String> = emptyList()
+        )
+
+        data class SyncDeltaReport(
+            val newDramasCount: Int = 0,
+            val newSeasonsCount: Int = 0,
+            val newEpisodesCount: Int = 0,
+            val updatedEpisodesCount: Int = 0,
+            val totalDramasCount: Int = 0,
+            val totalEpisodesCount: Int = 0
+        )
+
+        fun detectProviderName(url: String): String {
+            val lower = url.lowercase()
+            return when {
+                lower.contains("vidmoly") -> "Vidmoly HD"
+                lower.contains("ok.ru") || lower.contains("odnoklassniki") || lower.contains("okcdn.ru") -> "OK.ru HD"
+                lower.contains(".m3u8") -> "Direct HLS Stream"
+                lower.contains(".mp4") -> "Direct MP4 Stream"
+                else -> "HD Stream"
+            }
+        }
+
+        fun normalizeEmbedUrl(rawUrl: String): String {
+            var cleaned = rawUrl.trim()
+            if (cleaned.startsWith("//")) {
+                cleaned = "https:$cleaned"
+            } else if (cleaned.startsWith("http://")) {
+                cleaned = "https://${cleaned.removePrefix("http://")}"
+            }
+            return cleaned
+        }
+
+        fun parseOkRuEmbedHtml(embedUrl: String, rawHtml: String): ResolvedStreamInfo? {
+            if (rawHtml.isBlank()) return null
+            val optionsMatch = Regex("""data-options="([^"]+)"""").find(rawHtml) ?: return null
+            val rawOptions = optionsMatch.groupValues.getOrNull(1).orEmpty()
+                .replace("&quot;", "\"")
+                .replace("&amp;", "&")
+                .replace("&#39;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+
+            return try {
+                val outerJson = JSONObject(rawOptions)
+                val flashvars = outerJson.optJSONObject("flashvars") ?: return null
+                val metaJson = flashvars.optJSONObject("metadata") ?: run {
+                    val metadataRaw = flashvars.optString("metadata", "")
+                    if (metadataRaw.isBlank()) return null
+                    JSONObject(metadataRaw)
+                }
+                val movieObj = metaJson.optJSONObject("movie")
+                val durationSec = movieObj?.optInt("duration", 0) ?: 0
+                val hlsUrl = metaJson.optString("hlsManifestUrl", "").trim()
+
+                val mp4Urls = mutableListOf<String>()
+                val videosArray = metaJson.optJSONArray("videos")
+                if (videosArray != null) {
+                    for (i in 0 until videosArray.length()) {
+                        val vObj = videosArray.optJSONObject(i) ?: continue
+                        val vUrl = vObj.optString("url", "").trim()
+                        if (vUrl.startsWith("http")) {
+                            mp4Urls.add(vUrl)
+                        }
+                    }
+                }
+                // Prefer higher quality MP4s at the front of backup list
+                val orderedMp4s = mp4Urls.reversed()
+                val directCandidates = buildList {
+                    if (hlsUrl.startsWith("http")) add(hlsUrl)
+                    addAll(orderedMp4s)
+                }.distinct()
+
+                ResolvedStreamInfo(
+                    originalEmbedUrl = embedUrl,
+                    resolvedPlaybackUrl = embedUrl,
+                    isDirectMediaStream = false,
+                    providerName = "OK.ru HD",
+                    durationSeconds = durationSec,
+                    requiredReferer = "https://giveme5.co/",
+                    backupDirectUrls = directCandidates
+                )
+            } catch (e: Exception) {
+                null
+            }
+        }
+
         fun resolveCanonicalDrama(rawCategoryName: String, slug: String): CanonicalDramaResolution? {
             val cleanedName = rawCategoryName.trim()
             val lowerName = cleanedName.lowercase()
@@ -154,7 +248,7 @@ class WordPressContentRepository(context: Context? = null) {
                         dramaKey = "sultan_mehmed_fateh",
                         canonicalTitle = "Sultan Mehmed Fateh",
                         seasonNumber = resolvedSeason,
-                        hasExplicitSeason = true
+                        hasExplicitSeason = hasExplicitSeason
                     )
                 }
 
@@ -163,7 +257,7 @@ class WordPressContentRepository(context: Context? = null) {
                         dramaKey = "kurulus_osman",
                         canonicalTitle = "Kurulus Osman",
                         seasonNumber = resolvedSeason,
-                        hasExplicitSeason = true
+                        hasExplicitSeason = hasExplicitSeason
                     )
                 }
 
@@ -181,7 +275,7 @@ class WordPressContentRepository(context: Context? = null) {
                         dramaKey = "dirilis_ertugrul",
                         canonicalTitle = "Dirilis Ertugrul",
                         seasonNumber = resolvedSeason,
-                        hasExplicitSeason = true
+                        hasExplicitSeason = hasExplicitSeason
                     )
                 }
 
@@ -190,7 +284,7 @@ class WordPressContentRepository(context: Context? = null) {
                         dramaKey = "barbaroslar",
                         canonicalTitle = "Barbaroslar",
                         seasonNumber = resolvedSeason,
-                        hasExplicitSeason = true
+                        hasExplicitSeason = hasExplicitSeason
                     )
                 }
 
@@ -199,7 +293,7 @@ class WordPressContentRepository(context: Context? = null) {
                         dramaKey = "great_seljuk",
                         canonicalTitle = "Great Seljuk",
                         seasonNumber = resolvedSeason,
-                        hasExplicitSeason = true
+                        hasExplicitSeason = hasExplicitSeason
                     )
                 }
 
@@ -208,7 +302,7 @@ class WordPressContentRepository(context: Context? = null) {
                         dramaKey = "salahuddin_ayubi",
                         canonicalTitle = "Salahuddin Ayubi",
                         seasonNumber = resolvedSeason,
-                        hasExplicitSeason = true
+                        hasExplicitSeason = hasExplicitSeason
                     )
                 }
 
@@ -217,7 +311,7 @@ class WordPressContentRepository(context: Context? = null) {
                         dramaKey = "sultan_abdulhamid",
                         canonicalTitle = "Sultan Abdulhamid",
                         seasonNumber = resolvedSeason,
-                        hasExplicitSeason = true
+                        hasExplicitSeason = hasExplicitSeason
                     )
                 }
 
@@ -331,6 +425,121 @@ class WordPressContentRepository(context: Context? = null) {
         throw lastException ?: IllegalStateException("API request failed after $maxAttempts attempts")
     }
 
+    private suspend fun fetchAllCategoriesRawJson(): Pair<String, Int> {
+        val firstResp = executeWithRetry { api.getCategories(perPage = 100, page = 1) }
+        val statusCode = firstResp.code()
+        val firstBody = firstResp.body()?.string() ?: "[]"
+        val totalPages = firstResp.headers()["X-WP-TotalPages"]?.toIntOrNull() ?: 1
+        if (totalPages <= 1) {
+            return Pair(firstBody, statusCode)
+        }
+        val mergedArray = JSONArray(firstBody)
+        for (page in 2..totalPages.coerceAtMost(5)) {
+            runCatching {
+                val pageResp = executeWithRetry { api.getCategories(perPage = 100, page = page) }
+                val pageArr = JSONArray(pageResp.body()?.string() ?: "[]")
+                for (i in 0 until pageArr.length()) {
+                    mergedArray.put(pageArr.get(i))
+                }
+            }
+        }
+        return Pair(mergedArray.toString(), statusCode)
+    }
+
+    suspend fun resolveEmbedStream(embedUrl: String): ResolvedStreamInfo = withContext(Dispatchers.IO) {
+        val normalized = normalizeEmbedUrl(embedUrl)
+        val lower = normalized.lowercase()
+        val provider = detectProviderName(normalized)
+
+        if (lower.contains(".m3u8") || lower.contains(".mp4")) {
+            return@withContext ResolvedStreamInfo(
+                originalEmbedUrl = normalized,
+                resolvedPlaybackUrl = normalized,
+                isDirectMediaStream = true,
+                providerName = provider
+            )
+        }
+
+        if (lower.contains("ok.ru/videoembed/")) {
+            runCatching {
+                val req = okhttp3.Request.Builder()
+                    .url(normalized)
+                    .header("Referer", "https://giveme5.co/")
+                    .header(
+                        "User-Agent",
+                        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+                    )
+                    .build()
+                okHttpClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val html = resp.body?.string().orEmpty()
+                        parseOkRuEmbedHtml(normalized, html)?.let { return@withContext it }
+                    }
+                }
+            }
+        }
+
+        ResolvedStreamInfo(
+            originalEmbedUrl = normalized,
+            resolvedPlaybackUrl = normalized,
+            isDirectMediaStream = false,
+            providerName = provider,
+            requiredReferer = "https://giveme5.co/"
+        )
+    }
+
+    suspend fun syncLatestCatalogDelta(): SyncDeltaReport = withContext(Dispatchers.IO) {
+        val previousDramas = cacheMutex.withLock {
+            cachedCategories.ifEmpty { localCacheDb?.getCachedDramas().orEmpty() }
+        }
+        val previousLatest = cacheMutex.withLock {
+            cachedLatestEpisodes.ifEmpty { localCacheDb?.getCachedLatestEpisodes().orEmpty() }
+        }
+        val prevDramaKeys = previousDramas.map { it.slug }.toSet()
+        val prevSeasonCatIds = previousDramas.flatMap { it.allCategoryIds }.toSet()
+        val prevEpisodesByPostId = previousLatest.associateBy { it.postId }
+
+        val (freshDramas, freshLatest) = fetchDramasAndLatestEpisodes(forceRefresh = true)
+
+        val newDramasCount = freshDramas.count { it.slug !in prevDramaKeys }
+        val newSeasonsCount = freshDramas.flatMap { it.allCategoryIds }.count { it !in prevSeasonCatIds }
+        var newEpisodesCount = 0
+        var updatedEpisodesCount = 0
+
+        for (ep in freshLatest) {
+            val oldEp = prevEpisodesByPostId[ep.postId]
+            if (oldEp == null) {
+                newEpisodesCount++
+            } else if (oldEp.primaryEmbedUrl != ep.primaryEmbedUrl ||
+                oldEp.backupEmbedUrls != ep.backupEmbedUrls ||
+                oldEp.title != ep.title ||
+                oldEp.posterUrl != ep.posterUrl
+            ) {
+                updatedEpisodesCount++
+            }
+            // Merge into per-category episode cache if that category was already loaded
+            if (ep.categoryId > 0 && cachedCategoryEpisodes.containsKey(ep.categoryId)) {
+                val existingCatEps = cachedCategoryEpisodes[ep.categoryId].orEmpty()
+                val mergedCatEps = deduplicateSeasonEpisodes(existingCatEps + ep)
+                cachedCategoryEpisodes[ep.categoryId] = mergedCatEps
+                localCacheDb?.saveEpisodes(
+                    episodes = mergedCatEps,
+                    cacheKey = "cat_episodes_${ep.categoryId}",
+                    isLatestFeed = false
+                )
+            }
+        }
+
+        SyncDeltaReport(
+            newDramasCount = newDramasCount,
+            newSeasonsCount = newSeasonsCount,
+            newEpisodesCount = newEpisodesCount,
+            updatedEpisodesCount = updatedEpisodesCount,
+            totalDramasCount = freshDramas.size,
+            totalEpisodesCount = freshLatest.size + cachedCategoryEpisodes.values.sumOf { it.size }
+        )
+    }
+
     suspend fun fetchDramasAndLatestEpisodes(
         forceRefresh: Boolean = false
     ): Pair<List<DramaSeries>, List<EpisodeItem>> = withContext(Dispatchers.IO) {
@@ -366,11 +575,10 @@ class WordPressContentRepository(context: Context? = null) {
         var duplicateCount = 0
 
         try {
-            val categoriesResponse = executeWithRetry { api.getCategories(perPage = 100, page = 1) }
-            statusCode = categoriesResponse.code()
-            val categoriesBody = categoriesResponse.body()?.string() ?: "[]"
+            val (categoriesBody, catStatus) = fetchAllCategoriesRawJson()
+            statusCode = catStatus
 
-            val latestPostsResponse = executeWithRetry { api.getLatestPosts(perPage = 40, page = 1) }
+            val latestPostsResponse = executeWithRetry { api.getLatestPosts(perPage = 50, page = 1) }
             val latestPostsBody = latestPostsResponse.body()?.string() ?: "[]"
 
             // Parse categories first so we know each category's canonical drama & season number
@@ -418,7 +626,7 @@ class WordPressContentRepository(context: Context? = null) {
                 lastCacheTimestampMs = System.currentTimeMillis()
                 lastHealthReport = ApiHealthReport(
                     endpointUrl = "https://giveme5.co/wp-json/wp/v2",
-                    isHealthy = categoriesResponse.isSuccessful && latestPostsResponse.isSuccessful,
+                    isHealthy = (statusCode in 200..299) && latestPostsResponse.isSuccessful,
                     httpStatusCode = statusCode,
                     responseLatencyMs = latency,
                     totalCategoriesFetched = parsedDramas.sumOf { it.seasons.size },
@@ -800,8 +1008,8 @@ class WordPressContentRepository(context: Context? = null) {
 
             val titleSeasonMatch = SEASON_NUM_REGEX.find(renderedTitle)?.groupValues?.getOrNull(1)?.toIntOrNull()
             val mappedCategorySeason = categoryToSeasonMap[resolvedCategoryId]
-            val seasonNum = forcedSeasonNumber ?: titleSeasonMatch ?: mappedCategorySeason ?: 1
-            val hasExplicitSeason = forcedSeasonNumber != null || titleSeasonMatch != null || mappedCategorySeason != null
+            val seasonNum = titleSeasonMatch ?: forcedSeasonNumber ?: mappedCategorySeason ?: 1
+            val hasExplicitSeason = titleSeasonMatch != null || forcedSeasonNumber != null || mappedCategorySeason != null
 
             val mappedDramaTitle = categoryToDramaTitleMap[resolvedCategoryId]
             val inferredDramaTitle = mappedDramaTitle ?: inferDramaTitleFromEpisode(renderedTitle, defaultDramaName)
@@ -865,13 +1073,11 @@ class WordPressContentRepository(context: Context? = null) {
         return Pair("", "")
     }
 
-    private fun extractAuthorizedEmbedUrls(rawHtml: String): List<String> {
+    fun extractAuthorizedEmbedUrls(rawHtml: String): List<String> {
         val urls = mutableListOf<String>()
         IFRAME_SRC_REGEX.findAll(rawHtml).forEach { match ->
-            var src = match.groupValues.getOrNull(1)?.trim().orEmpty()
-            if (src.startsWith("//")) {
-                src = "https:$src"
-            }
+            val rawSrc = match.groupValues.getOrNull(1)?.trim().orEmpty()
+            val src = normalizeEmbedUrl(rawSrc)
             val lower = src.lowercase()
             val isAd = lower.contains("bicea.org") ||
                 lower.contains("doubleclick") ||

@@ -281,6 +281,18 @@ private fun AuthenticatedDastanWorkspace(
         }
 
         is ActiveOverlayScreen.VideoPlayer -> {
+            val parentDrama = remember(currentOverlay.episode, userDramas) {
+                userDramas.firstOrNull { drama ->
+                    drama.allCategoryIds.contains(currentOverlay.episode.categoryId) ||
+                        drama.title.equals(currentOverlay.episode.dramaTitle, ignoreCase = true)
+                }
+            }
+            val nextSeasonObj = remember(currentOverlay.episode, parentDrama) {
+                parentDrama?.seasons
+                    ?.sortedBy { it.seasonNumber }
+                    ?.firstOrNull { it.seasonNumber > currentOverlay.episode.seasonNumber }
+            }
+
             VideoPlayerScreen(
                 episode = currentOverlay.episode,
                 siblingEpisodes = currentOverlay.siblingEpisodes,
@@ -299,7 +311,30 @@ private fun AuthenticatedDastanWorkspace(
                         durationMs = durationMs,
                         completed = completed
                     )
-                }
+                },
+                nextSeasonNumber = nextSeasonObj?.seasonNumber,
+                onPlayNextSeason = if (parentDrama != null && nextSeasonObj != null) {
+                    {
+                        val targetSeason = nextSeasonObj.seasonNumber
+                        val cachedNextSeasonEps = viewModel.getEpisodesForDramaSeason(
+                            drama = parentDrama,
+                            seasonNumber = targetSeason,
+                            includeHidden = false
+                        )
+                        if (cachedNextSeasonEps.isNotEmpty()) {
+                            overlayScreen = ActiveOverlayScreen.VideoPlayer(
+                                episode = cachedNextSeasonEps.first(),
+                                siblingEpisodes = cachedNextSeasonEps
+                            )
+                        } else {
+                            viewModel.loadEpisodesForDrama(parentDrama, seasonNumber = targetSeason)
+                            overlayScreen = ActiveOverlayScreen.DramaDetail(
+                                drama = parentDrama,
+                                selectedSeason = targetSeason
+                            )
+                        }
+                    }
+                } else null
             )
         }
 

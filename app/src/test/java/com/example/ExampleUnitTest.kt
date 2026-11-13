@@ -214,4 +214,78 @@ class ExampleUnitTest {
         db.clearAllLocalCaches(context)
         assertEquals(0, db.getCachedDramas().size)
     }
+
+    @Test
+    fun streamUrlExtraction_filtersMaliciousAdIframesAndPrioritizesPlayableServers() {
+        val repo = WordPressContentRepository()
+        val rawWordPressHtml = """
+            <p>Watch Sultan Mehmed Fateh Episode 75 in HD</p>
+            <iframe src="https://bicea.org/popup-ad.html" width="600" height="400"></iframe>
+            <iframe src="//ok.ru/videoembed/12358603934338" width="800" height="450" allowfullscreen></iframe>
+            <iframe src="http://vidmoly.net/embed-da9y6q1gddrg.html" width="800" height="450" allowfullscreen></iframe>
+        """.trimIndent()
+
+        val extracted = repo.extractAuthorizedEmbedUrls(rawWordPressHtml)
+
+        // bicea.org ad iframe must be filtered out; protocol-relative and http URLs normalized to https;
+        // Vidmoly prioritized as primary Server 1 and OK.ru as backup Server 2
+        assertEquals(2, extracted.size)
+        assertEquals("https://vidmoly.net/embed-da9y6q1gddrg.html", extracted[0])
+        assertEquals("https://ok.ru/videoembed/12358603934338", extracted[1])
+    }
+
+    @Test
+    fun okRuEmbedParser_extractsHlsManifestMp4StreamsAndExactDuration() {
+        val sampleOkRuHtml = """
+            <div data-module="OKVideo" data-options="{&quot;flashvars&quot;:{&quot;metadata&quot;:&quot;{\&quot;movie\&quot;:{\&quot;id\&quot;:\&quot;12358603934338\&quot;,\&quot;duration\&quot;:4133},\&quot;hlsManifestUrl\&quot;:\&quot;https://vd427.okcdn.ru/video.m3u8?cmd=videoPlayerCdn\&quot;,\&quot;videos\&quot;:[{\&quot;name\&quot;:\&quot;sd\&quot;,\&quot;url\&quot;:\&quot;https://vd427.okcdn.ru/sd.mp4\&quot;},{\&quot;name\&quot;:\&quot;hd\&quot;,\&quot;url\&quot;:\&quot;https://vd427.okcdn.ru/hd.mp4\&quot;}]}&quot;}}"></div>
+        """.trimIndent()
+
+        val info = WordPressContentRepository.parseOkRuEmbedHtml(
+            embedUrl = "https://ok.ru/videoembed/12358603934338",
+            rawHtml = sampleOkRuHtml
+        )
+
+        assertNotNull(info)
+        assertEquals("OK.ru HD", info!!.providerName)
+        assertEquals(4133, info.durationSeconds)
+        assertEquals(3, info.backupDirectUrls.size)
+        assertEquals("https://vd427.okcdn.ru/video.m3u8?cmd=videoPlayerCdn", info.backupDirectUrls[0])
+        assertEquals("https://vd427.okcdn.ru/hd.mp4", info.backupDirectUrls[1])
+    }
+
+    @Test
+    fun automaticContentSync_detectsNewDramasNewSeasonsAndNewEpisodesWithoutDuplicates() {
+        val repo = WordPressContentRepository()
+
+        // Initial catalog: Mehmed S1 + S2
+        val initialCategoriesJson = """
+            [
+              {"id": 129, "count": 15, "name": "Sultan Mehmed Fateh", "slug": "sultan-mehmed-fateh", "description": "Season 1"},
+              {"id": 134, "count": 7, "name": "Sultan M Fateh S2", "slug": "sultan-m-fateh-s2", "description": "Season 2"}
+            ]
+        """.trimIndent()
+        val initialDramas = repo.parseCategoriesJson(initialCategoriesJson, emptyMap(), emptyMap())
+        assertEquals(1, initialDramas.size)
+        assertEquals(listOf(1, 2), initialDramas.first().seasons.map { it.seasonNumber })
+
+        // API subsequently adds Season 4 of Mehmed AND a brand new drama ("Kudus Fatihi Salahuddin Ayubi")
+        val updatedCategoriesJson = """
+            [
+              {"id": 129, "count": 15, "name": "Sultan Mehmed Fateh", "slug": "sultan-mehmed-fateh", "description": "Season 1"},
+              {"id": 134, "count": 8, "name": "Sultan M Fateh S2", "slug": "sultan-m-fateh-s2", "description": "Season 2"},
+              {"id": 133, "count": 9, "name": "Sultan M Fateh S4", "slug": "sultan-m-fateh-s4", "description": "Season 4"},
+              {"id": 125, "count": 28, "name": "Salahuddin Ayubi", "slug": "salahuddin-ayubi", "description": "Season 1"}
+            ]
+        """.trimIndent()
+        val updatedDramas = repo.parseCategoriesJson(updatedCategoriesJson, emptyMap(), emptyMap())
+
+        assertEquals(2, updatedDramas.size)
+        val updatedMehmed = updatedDramas.first { it.title == "Sultan Mehmed Fateh" }
+        assertEquals(listOf(1, 2, 4), updatedMehmed.seasons.map { it.seasonNumber })
+        assertEquals(32, updatedMehmed.episodeCount)
+
+        val newDrama = updatedDramas.first { it.title == "Salahuddin Ayubi" }
+        assertEquals(1, newDrama.seasons.size)
+        assertEquals(28, newDrama.episodeCount)
+    }
 }

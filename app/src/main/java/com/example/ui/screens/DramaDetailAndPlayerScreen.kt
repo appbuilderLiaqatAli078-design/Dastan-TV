@@ -2,9 +2,19 @@ package com.example.ui.screens
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
 import android.content.pm.ActivityInfo
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -678,6 +688,252 @@ private fun EpisodeListRow(
     }
 }
 
+private class DastanPlayerJsBridge(
+    private val mainHandler: Handler,
+    private val onTelemetry: (
+        state: String,
+        positionSec: Float,
+        durationSec: Float,
+        muted: Boolean,
+        videoWidth: Int,
+        videoHeight: Int,
+        provider: String
+    ) -> Unit,
+    private val onError: (String) -> Unit
+) {
+    @JavascriptInterface
+    fun onPlayerTelemetry(
+        state: String,
+        positionSec: Double,
+        durationSec: Double,
+        muted: Boolean,
+        videoWidth: Int,
+        videoHeight: Int,
+        provider: String
+    ) {
+        val safePos = if (positionSec.isFinite() && positionSec >= 0.0) positionSec.toFloat() else 0f
+        val safeDur = if (durationSec.isFinite() && durationSec > 0.0) durationSec.toFloat() else 0f
+        mainHandler.post {
+            onTelemetry(
+                state,
+                safePos,
+                safeDur,
+                muted,
+                videoWidth.coerceAtLeast(0),
+                videoHeight.coerceAtLeast(0),
+                provider
+            )
+        }
+    }
+
+    @JavascriptInterface
+    fun onPlayerError(message: String) {
+        mainHandler.post {
+            if (message.isNotBlank()) {
+                onError(message)
+            }
+        }
+    }
+}
+
+private const val DASTAN_PLAYER_BRIDGE_JS = """
+(function() {
+    try {
+        // Remove any residual anti-adblock or popup overlays so video viewport is never obscured
+        var overlays = document.querySelectorAll('#x-adb-root, #adblock-overlay, .vjs-adb-overlay');
+        for (var i = 0; i < overlays.length; i++) {
+            overlays[i].remove();
+        }
+        if (typeof window.__dastanUserMuted === 'undefined') {
+            window.__dastanUserMuted = false;
+        }
+
+        window.__dastanGetJw = function() {
+            try {
+                if (window.player && typeof window.player.getState === 'function') return window.player;
+                if (typeof window.jwplayer === 'function') {
+                    var p = window.jwplayer('vplayer') || window.jwplayer();
+                    if (p && typeof p.getState === 'function') return p;
+                }
+            } catch (e) {}
+            return null;
+        };
+
+        window.__dastanTogglePlay = function() {
+            try {
+                var jw = window.__dastanGetJw();
+                if (jw) {
+                    var st = (jw.getState() || '').toLowerCase();
+                    if (st === 'playing' || st === 'buffering') {
+                        jw.pause(true);
+                    } else {
+                        jw.play(true);
+                    }
+                    return;
+                }
+                var v = document.querySelector('video');
+                if (v) {
+                    if (v.paused) v.play(); else v.pause();
+                } else {
+                    var okStub = document.querySelector('.vp_video_stub, .html5-vpl_panel_play');
+                    if (okStub) okStub.click();
+                }
+            } catch (e) {}
+        };
+
+        window.__dastanSeekTo = function(targetSec) {
+            try {
+                var jw = window.__dastanGetJw();
+                if (jw && typeof jw.seek === 'function') {
+                    jw.seek(targetSec);
+                    return;
+                }
+                var v = document.querySelector('video');
+                if (v) {
+                    v.currentTime = targetSec;
+                }
+            } catch (e) {}
+        };
+
+        window.__dastanSeekBy = function(deltaSec) {
+            try {
+                var jw = window.__dastanGetJw();
+                if (jw && typeof jw.getPosition === 'function' && typeof jw.seek === 'function') {
+                    var nextPos = Math.max(0, (jw.getPosition() || 0) + deltaSec);
+                    jw.seek(nextPos);
+                    return;
+                }
+                var v = document.querySelector('video');
+                if (v) {
+                    v.currentTime = Math.max(0, (v.currentTime || 0) + deltaSec);
+                }
+            } catch (e) {}
+        };
+
+        window.__dastanSetMute = function(muteFlag) {
+            try {
+                window.__dastanUserMuted = !!muteFlag;
+                var jw = window.__dastanGetJw();
+                if (jw && typeof jw.setMute === 'function') {
+                    jw.setMute(!!muteFlag);
+                    if (!muteFlag && typeof jw.setVolume === 'function') jw.setVolume(100);
+                }
+                var v = document.querySelector('video');
+                if (v) {
+                    v.muted = !!muteFlag;
+                    if (!muteFlag) v.volume = 1.0;
+                }
+            } catch (e) {}
+        };
+
+        var jw = window.__dastanGetJw();
+        var v = document.querySelector('video');
+
+        if (jw) {
+            if (!window.__dastanUserMuted) {
+                if (typeof jw.setMute === 'function') jw.setMute(false);
+                if (typeof jw.setVolume === 'function') jw.setVolume(100);
+            }
+            var jwState = (jw.getState() || 'idle').toLowerCase();
+            if (!window.__dastanAutoStarted && jwState === 'idle') {
+                window.__dastanAutoStarted = true;
+                try { jw.play(true); } catch (e) {}
+            }
+            var pos = Number(jw.getPosition() || (v ? v.currentTime : 0) || 0);
+            var dur = Number(jw.getDuration() || (v ? v.duration : 0) || 0);
+            var muted = typeof jw.getMute === 'function' ? !!jw.getMute() : (v ? !!v.muted : false);
+            var vw = v ? (v.videoWidth || 0) : 0;
+            var vh = v ? (v.videoHeight || 0) : 0;
+            if (window.DastanBridge && typeof window.DastanBridge.onPlayerTelemetry === 'function') {
+                window.DastanBridge.onPlayerTelemetry(jwState, pos, dur, muted, vw, vh, 'Vidmoly JWPlayer');
+            }
+            return;
+        }
+
+        // Check OK.ru stub if video tag hasn't initialized yet
+        if (!v) {
+            var stub = document.querySelector('.vp_video_stub');
+            if (stub && !window.__dastanAutoStarted) {
+                window.__dastanAutoStarted = true;
+                try { stub.click(); } catch (e) {}
+            }
+        }
+
+        v = document.querySelector('video');
+        if (v) {
+            if (!window.__dastanUserMuted) {
+                v.muted = false;
+                if (v.volume === 0) v.volume = 1.0;
+            }
+            if (!window.__dastanAutoStarted && v.paused && v.readyState >= 1) {
+                window.__dastanAutoStarted = true;
+                try {
+                    var playPromise = v.play();
+                    if (playPromise && typeof playPromise.catch === 'function') {
+                        playPromise.catch(function(){});
+                    }
+                } catch (e) {}
+            }
+            var vState = v.ended ? 'complete' : (v.paused ? 'paused' : (v.readyState < 3 ? 'buffering' : 'playing'));
+            var vPos = Number(v.currentTime || 0);
+            var vDur = Number(v.duration || 0);
+            var vMuted = !!v.muted;
+            var vWidth = v.videoWidth || 0;
+            var vHeight = v.videoHeight || 0;
+            if (window.DastanBridge && typeof window.DastanBridge.onPlayerTelemetry === 'function') {
+                window.DastanBridge.onPlayerTelemetry(vState, vPos, vDur, vMuted, vWidth, vHeight, 'HTML5 Video');
+            }
+        }
+    } catch (err) {}
+})();
+"""
+
+private fun loadStreamUrlIntoWebView(webView: WebView, rawUrl: String) {
+    val normalizedUrl = rawUrl.trim().let {
+        when {
+            it.startsWith("//") -> "https:$it"
+            it.startsWith("http://") -> "https://${it.removePrefix("http://")}"
+            else -> it
+        }
+    }
+    webView.tag = normalizedUrl
+    val lower = normalizedUrl.lowercase()
+    val isDirectStream = lower.contains(".m3u8") || lower.contains(".mp4")
+
+    if (isDirectStream) {
+        val directHtml = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+                <style>
+                    * { margin: 0; padding: 0; box-sizing: border-box; background: #000; }
+                    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+                    video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+                </style>
+            </head>
+            <body>
+                <video id="dastanDirectVideo" src="$normalizedUrl" autoplay playsinline controls preload="auto"></video>
+            </body>
+            </html>
+        """.trimIndent()
+        webView.loadDataWithBaseURL(
+            "https://giveme5.co/",
+            directHtml,
+            "text/html",
+            "UTF-8",
+            null
+        )
+    } else {
+        // Load provider embed directly as top-level document with Referer header so
+        // cross-origin iframe isolation and Vidmoly sandbox checks never block playback
+        webView.loadUrl(
+            normalizedUrl,
+            mapOf("Referer" to "https://giveme5.co/")
+        )
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun VideoPlayerScreen(
@@ -686,10 +942,13 @@ fun VideoPlayerScreen(
     subtitleEnabledByDefault: Boolean,
     onBack: () -> Unit,
     onSelectEpisode: (EpisodeItem) -> Unit,
-    onSaveProgress: (progressMs: Long, durationMs: Long, completed: Boolean) -> Unit
+    onSaveProgress: (progressMs: Long, durationMs: Long, completed: Boolean) -> Unit,
+    nextSeasonNumber: Int? = null,
+    onPlayNextSeason: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     // Ensure sibling episodes are strictly from the same drama & season and sorted by episodeNumber
     val orderedSeasonEpisodes = remember(episode, siblingEpisodes) {
@@ -715,14 +974,18 @@ fun VideoPlayerScreen(
     val activeEmbedUrl = allServers.getOrNull(selectedServerIndex) ?: ""
 
     var isFullScreenLandscape by remember { mutableStateOf(false) }
-    var isPlaying by remember { mutableStateOf(true) }
+    var isPlaying by remember(episode.id, selectedServerIndex) { mutableStateOf(false) }
+    var playerStateLabel by remember(episode.id, selectedServerIndex) { mutableStateOf("Connecting") }
     var isMuted by remember { mutableStateOf(false) }
     var subtitlesVisible by remember { mutableStateOf(subtitleEnabledByDefault) }
-    var isLoadingWebView by remember { mutableStateOf(true) }
-    var playerError by remember { mutableStateOf<String?>(null) }
-    var simulatedPositionSec by remember(episode.id) { mutableFloatStateOf(0f) }
-    val estimatedDurationSec = 2700f
+    var isLoadingWebView by remember(episode.id, selectedServerIndex) { mutableStateOf(true) }
+    var playerError by remember(episode.id, selectedServerIndex) { mutableStateOf<String?>(null) }
+    var currentPositionSec by remember(episode.id) { mutableFloatStateOf(0f) }
+    var actualDurationSec by remember(episode.id) { mutableFloatStateOf(0f) }
+    var videoResolutionLabel by remember(episode.id, selectedServerIndex) { mutableStateOf("") }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+
+    val effectiveDurationSec = if (actualDurationSec > 10f) actualDurationSec else 2700f
 
     val currentIndex = remember(episode.id, episode.episodeNumber, orderedSeasonEpisodes) {
         val byId = orderedSeasonEpisodes.indexOfFirst { it.id == episode.id }
@@ -734,29 +997,70 @@ fun VideoPlayerScreen(
         orderedSeasonEpisodes.getOrNull(currentIndex + 1)
     } else null
 
-    // Periodic progress tracking & auto-save to Firestore watch_history
-    LaunchedEffect(episode.id, isPlaying) {
-        while (true) {
-            delay(5000L)
-            if (isPlaying && !isLoadingWebView && playerError == null) {
-                simulatedPositionSec = (simulatedPositionSec + 5f).coerceAtMost(estimatedDurationSec)
+    // Request Android Audio Focus + Keep Screen On during video playback
+    DisposableEffect(episode.id) {
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        var focusRequest: AudioFocusRequest? = null
+        if (audioManager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val attrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                .build()
+            focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(attrs)
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener { change ->
+                    if (change == AudioManager.AUDIOFOCUS_LOSS ||
+                        change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+                    ) {
+                        webViewRef?.evaluateJavascript(
+                            "try { var jw = window.__dastanGetJw && window.__dastanGetJw(); if(jw) jw.pause(true); var v = document.querySelector('video'); if(v) v.pause(); } catch(e){}",
+                            null
+                        )
+                    }
+                }
+                .build()
+            runCatching { audioManager.requestAudioFocus(focusRequest) }
+        }
+
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            if (audioManager != null && focusRequest != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                runCatching { audioManager.abandonAudioFocusRequest(focusRequest) }
+            }
+            if (currentPositionSec > 5f) {
                 onSaveProgress(
-                    (simulatedPositionSec * 1000).toLong(),
-                    (estimatedDurationSec * 1000).toLong(),
-                    simulatedPositionSec >= estimatedDurationSec * 0.92f
+                    (currentPositionSec * 1000).toLong(),
+                    (effectiveDurationSec * 1000).toLong(),
+                    currentPositionSec >= effectiveDurationSec * 0.92f
                 )
             }
         }
     }
 
-    DisposableEffect(episode.id) {
-        onDispose {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            onSaveProgress(
-                (simulatedPositionSec * 1000).toLong(),
-                (estimatedDurationSec * 1000).toLong(),
-                simulatedPositionSec >= estimatedDurationSec * 0.92f
-            )
+    // Poll real player telemetry via injected JS bridge every 1000ms (no fake progress timer!)
+    LaunchedEffect(episode.id, activeEmbedUrl, isLoadingWebView) {
+        while (true) {
+            delay(1000L)
+            if (!isLoadingWebView && playerError == null) {
+                webViewRef?.evaluateJavascript(DASTAN_PLAYER_BRIDGE_JS, null)
+            }
+        }
+    }
+
+    // Save real watch progress to Firestore every 5 seconds only when actual playback has advanced
+    LaunchedEffect(episode.id, isPlaying) {
+        while (true) {
+            delay(5000L)
+            if (isPlaying && currentPositionSec > 2f && playerError == null) {
+                onSaveProgress(
+                    (currentPositionSec * 1000).toLong(),
+                    (effectiveDurationSec * 1000).toLong(),
+                    currentPositionSec >= effectiveDurationSec * 0.92f
+                )
+            }
         }
     }
 
@@ -806,10 +1110,17 @@ fun VideoPlayerScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    val statusInfo = buildList {
+                        add("${episode.dramaTitle} • S${episode.seasonNumber} E${episode.episodeNumber}")
+                        if (playerStateLabel.isNotBlank()) add(playerStateLabel)
+                        if (videoResolutionLabel.isNotBlank()) add(videoResolutionLabel)
+                    }.joinToString(" • ")
                     Text(
-                        text = "${episode.dramaTitle} • Season ${episode.seasonNumber} • Episode ${episode.episodeNumber}",
+                        text = statusInfo,
                         style = MaterialTheme.typography.labelSmall,
-                        color = OttomanGoldAccent
+                        color = OttomanGoldAccent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 IconButton(
@@ -835,7 +1146,7 @@ fun VideoPlayerScreen(
             }
         }
 
-        // Video Embed Container (Evaluates Vidmoly / OK.ru iframe inside hardened WebView)
+        // Video Player Container (Top-Level Hardware-Accelerated WebView with Referer & Cookie Support)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -864,23 +1175,34 @@ fun VideoPlayerScreen(
                     )
                 }
             } else {
-                val htmlWrapper = remember(activeEmbedUrl) {
-                    """
-                    <!DOCTYPE html>
-                    <html>
-                    <head>
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-                        <style>
-                            * { margin: 0; padding: 0; box-sizing: border-box; background: #000; }
-                            html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
-                            iframe { width: 100%; height: 100%; border: 0; display: block; }
-                        </style>
-                    </head>
-                    <body>
-                        <iframe id="ottFrame" src="$activeEmbedUrl" allowfullscreen="true" webkitallowfullscreen="true" mozallowfullscreen="true" allow="autoplay; fullscreen; encrypted-media"></iframe>
-                    </body>
-                    </html>
-                    """.trimIndent()
+                val jsBridge = remember(episode.id) {
+                    DastanPlayerJsBridge(
+                        mainHandler = mainHandler,
+                        onTelemetry = { state, posSec, durSec, muted, vw, vh, _ ->
+                            val normalizedState = state.lowercase()
+                            isPlaying = normalizedState == "playing"
+                            playerStateLabel = when (normalizedState) {
+                                "playing" -> "Playing"
+                                "buffering" -> "Buffering"
+                                "paused" -> "Paused"
+                                "complete" -> "Completed"
+                                else -> "Ready"
+                            }
+                            if (posSec > 0f) {
+                                currentPositionSec = posSec
+                            }
+                            if (durSec > 10f) {
+                                actualDurationSec = durSec
+                            }
+                            isMuted = muted
+                            if (vw > 0 && vh > 0) {
+                                videoResolutionLabel = "${vw}×${vh}"
+                            }
+                        },
+                        onError = { errMsg ->
+                            playerError = errMsg
+                        }
+                    )
                 }
 
                 AndroidView(
@@ -891,17 +1213,43 @@ fun VideoPlayerScreen(
                                 ViewGroup.LayoutParams.MATCH_PARENT
                             )
                             setBackgroundColor(android.graphics.Color.BLACK)
+                            // Enforce hardware acceleration for HTML5 MSE/HLS video decoding
+                            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+                            // Enable 1st and 3rd party cookies required by Vidmoly & OK.ru CDN tokens
+                            runCatching {
+                                val cookieManager = CookieManager.getInstance()
+                                cookieManager.setAcceptCookie(true)
+                                cookieManager.setAcceptThirdPartyCookies(this, true)
+                            }
+
                             settings.apply {
                                 javaScriptEnabled = true
                                 domStorageEnabled = true
+                                databaseEnabled = true
                                 mediaPlaybackRequiresUserGesture = false
                                 loadWithOverviewMode = true
                                 useWideViewPort = true
+                                javaScriptCanOpenWindowsAutomatically = false
+                                setSupportMultipleWindows(true)
                                 mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                                 userAgentString =
                                     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
                             }
+
+                            addJavascriptInterface(jsBridge, "DastanBridge")
+
                             webChromeClient = object : WebChromeClient() {
+                                override fun onCreateWindow(
+                                    view: WebView?,
+                                    isDialog: Boolean,
+                                    isUserGesture: Boolean,
+                                    resultMsg: android.os.Message?
+                                ): Boolean {
+                                    // Suppress popup ad windows so user taps stay on the video player
+                                    return false
+                                }
+
                                 override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
                                     super.onShowCustomView(view, callback)
                                     isFullScreenLandscape = true
@@ -917,9 +1265,11 @@ fun VideoPlayerScreen(
                                 }
                             }
                             webViewClient = object : WebViewClient() {
+                                // IMPORTANT: Do NOT block doubleclick.net or googlesyndication.com here!
+                                // Vidmoly's inline scan() checks googleads.g.doubleclick.net/pagead/id and
+                                // triggers a full-screen black overlay (#x-adb-root) if that request fails.
                                 private val blockedDomains = listOf(
-                                    "bicea.org", "doubleclick.net", "googlesyndication.com",
-                                    "adsterra", "popads", "onclickads"
+                                    "bicea.org", "popads.net", "onclickads.net"
                                 )
 
                                 override fun shouldInterceptRequest(
@@ -943,9 +1293,15 @@ fun VideoPlayerScreen(
                                 ): Boolean {
                                     val targetHost = request?.url?.host?.lowercase().orEmpty()
                                     val isAllowedPlayer = targetHost.contains("vidmoly") ||
+                                        targetHost.contains("staticmoly") ||
+                                        targetHost.contains("vmpx") ||
+                                        targetHost.contains("jwpcdn") ||
+                                        targetHost.contains("jwplayer") ||
                                         targetHost.contains("ok.ru") ||
-                                        targetHost.contains("giveme5.co") ||
                                         targetHost.contains("odnoklassniki") ||
+                                        targetHost.contains("okcdn") ||
+                                        targetHost.contains("mycdn") ||
+                                        targetHost.contains("giveme5.co") ||
                                         targetHost.contains("vk.com") ||
                                         targetHost.contains("dailymotion")
                                     return !isAllowedPlayer
@@ -954,6 +1310,7 @@ fun VideoPlayerScreen(
                                 override fun onPageFinished(view: WebView?, url: String?) {
                                     super.onPageFinished(view, url)
                                     isLoadingWebView = false
+                                    view?.evaluateJavascript(DASTAN_PLAYER_BRIDGE_JS, null)
                                 }
 
                                 override fun onReceivedError(
@@ -964,22 +1321,28 @@ fun VideoPlayerScreen(
                                     super.onReceivedError(view, request, error)
                                     if (request?.isForMainFrame == true) {
                                         isLoadingWebView = false
-                                        playerError = "Stream server unreachable. Try switching to Backup Server."
+                                        playerError = "Stream server unreachable. Tap below to switch to Backup Server."
                                     }
                                 }
                             }
                             webViewRef = this
-                            loadDataWithBaseURL(
-                                "https://giveme5.co/",
-                                htmlWrapper,
-                                "text/html",
-                                "UTF-8",
-                                null
-                            )
+                            loadStreamUrlIntoWebView(this, activeEmbedUrl)
                         }
                     },
                     update = { view ->
                         webViewRef = view
+                        val normalizedTarget = activeEmbedUrl.trim().let {
+                            when {
+                                it.startsWith("//") -> "https:$it"
+                                it.startsWith("http://") -> "https://${it.removePrefix("http://")}"
+                                else -> it
+                            }
+                        }
+                        if (normalizedTarget.isNotBlank() && view.tag != normalizedTarget) {
+                            isLoadingWebView = true
+                            playerError = null
+                            loadStreamUrlIntoWebView(view, normalizedTarget)
+                        }
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -1037,7 +1400,7 @@ fun VideoPlayerScreen(
                                 if (allServers.size > 1) {
                                     selectedServerIndex = (selectedServerIndex + 1) % allServers.size
                                 } else {
-                                    webViewRef?.reload()
+                                    webViewRef?.let { loadStreamUrlIntoWebView(it, activeEmbedUrl) }
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = RoyalVioletAccent)
@@ -1051,7 +1414,7 @@ fun VideoPlayerScreen(
             }
 
             // Subtitle Status Pill Overlay
-            if (subtitlesVisible && !isLoadingWebView) {
+            if (subtitlesVisible && !isLoadingWebView && playerError == null) {
                 Surface(
                     color = MidnightBg.copy(alpha = 0.78f),
                     shape = RoundedCornerShape(6.dp),
@@ -1075,26 +1438,26 @@ fun VideoPlayerScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
-                // Progress Scrubber
+                // Real Progress Scrubber (Synced via DastanBridge with JWPlayer / HTML5 video)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = formatDurationSeconds(simulatedPositionSec.toInt()),
+                        text = formatDurationSeconds(currentPositionSec.toInt()),
                         style = MaterialTheme.typography.labelSmall,
                         color = OttomanGoldAccent
                     )
                     Slider(
-                        value = simulatedPositionSec,
+                        value = currentPositionSec.coerceIn(0f, effectiveDurationSec),
                         onValueChange = { newSec ->
-                            simulatedPositionSec = newSec
+                            currentPositionSec = newSec
                             webViewRef?.evaluateJavascript(
-                                "try { var v = document.querySelector('video'); if(v) v.currentTime = ${newSec.toInt()}; } catch(e){}",
+                                "if (window.__dastanSeekTo) window.__dastanSeekTo(${newSec.toInt()});",
                                 null
                             )
                         },
-                        valueRange = 0f..estimatedDurationSec,
+                        valueRange = 0f..effectiveDurationSec,
                         colors = SliderDefaults.colors(
                             thumbColor = OttomanGoldAccent,
                             activeTrackColor = RoyalVioletAccent,
@@ -1105,7 +1468,13 @@ fun VideoPlayerScreen(
                             .padding(horizontal = 6.dp)
                     )
                     Text(
-                        text = formatDurationSeconds(estimatedDurationSec.toInt()),
+                        text = if (actualDurationSec > 10f) {
+                            formatDurationSeconds(actualDurationSec.toInt())
+                        } else if (episode.durationLabel.isNotBlank()) {
+                            episode.durationLabel
+                        } else {
+                            "--:--"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = SecondaryMutedText
                     )
@@ -1131,9 +1500,9 @@ fun VideoPlayerScreen(
 
                     IconButton(
                         onClick = {
-                            simulatedPositionSec = (simulatedPositionSec - 10f).coerceAtLeast(0f)
+                            currentPositionSec = (currentPositionSec - 10f).coerceAtLeast(0f)
                             webViewRef?.evaluateJavascript(
-                                "try { var v = document.querySelector('video'); if(v) v.currentTime -= 10; } catch(e){}",
+                                "if (window.__dastanSeekBy) window.__dastanSeekBy(-10);",
                                 null
                             )
                         }
@@ -1151,9 +1520,8 @@ fun VideoPlayerScreen(
                         modifier = Modifier
                             .size(40.dp)
                             .clickable {
-                                isPlaying = !isPlaying
                                 webViewRef?.evaluateJavascript(
-                                    "try { var v = document.querySelector('video'); if(v) { if(v.paused) v.play(); else v.pause(); } } catch(e){}",
+                                    "if (window.__dastanTogglePlay) window.__dastanTogglePlay();",
                                     null
                                 )
                             }
@@ -1170,9 +1538,9 @@ fun VideoPlayerScreen(
 
                     IconButton(
                         onClick = {
-                            simulatedPositionSec = (simulatedPositionSec + 10f).coerceAtMost(estimatedDurationSec)
+                            currentPositionSec = (currentPositionSec + 10f).coerceAtMost(effectiveDurationSec)
                             webViewRef?.evaluateJavascript(
-                                "try { var v = document.querySelector('video'); if(v) v.currentTime += 10; } catch(e){}",
+                                "if (window.__dastanSeekBy) window.__dastanSeekBy(10);",
                                 null
                             )
                         }
@@ -1185,22 +1553,29 @@ fun VideoPlayerScreen(
                     }
 
                     IconButton(
-                        onClick = { nextEpisode?.let(onSelectEpisode) },
-                        enabled = nextEpisode != null,
+                        onClick = {
+                            if (nextEpisode != null) {
+                                onSelectEpisode(nextEpisode)
+                            } else {
+                                onPlayNextSeason?.invoke()
+                            }
+                        },
+                        enabled = nextEpisode != null || onPlayNextSeason != null,
                         modifier = Modifier.testTag("player_next_episode_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.SkipNext,
                             contentDescription = "Next Episode",
-                            tint = if (nextEpisode != null) PrimaryWhiteText else SecondaryMutedText.copy(alpha = 0.35f)
+                            tint = if (nextEpisode != null || onPlayNextSeason != null) PrimaryWhiteText else SecondaryMutedText.copy(alpha = 0.35f)
                         )
                     }
 
                     IconButton(
                         onClick = {
-                            isMuted = !isMuted
+                            val nextMute = !isMuted
+                            isMuted = nextMute
                             webViewRef?.evaluateJavascript(
-                                "try { var v = document.querySelector('video'); if(v) v.muted = $isMuted; } catch(e){}",
+                                "if (window.__dastanSetMute) window.__dastanSetMute($nextMute);",
                                 null
                             )
                         }
@@ -1238,8 +1613,8 @@ fun VideoPlayerScreen(
                     }
                 }
 
-                // Quick Previous / Next Episode Navigation Bar
-                if (previousEpisode != null || nextEpisode != null) {
+                // Quick Previous / Next Episode or Next Season Navigation Bar
+                if (previousEpisode != null || nextEpisode != null || (nextSeasonNumber != null && onPlayNextSeason != null)) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1273,8 +1648,14 @@ fun VideoPlayerScreen(
                         }
 
                         Button(
-                            onClick = { nextEpisode?.let(onSelectEpisode) },
-                            enabled = nextEpisode != null,
+                            onClick = {
+                                if (nextEpisode != null) {
+                                    onSelectEpisode(nextEpisode)
+                                } else {
+                                    onPlayNextSeason?.invoke()
+                                }
+                            },
+                            enabled = nextEpisode != null || onPlayNextSeason != null,
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = OttomanGoldAccent,
@@ -1284,12 +1665,13 @@ fun VideoPlayerScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(34.dp)
+                                .testTag("player_next_season_or_ep_button")
                         ) {
                             Text(
-                                text = if (nextEpisode != null) {
-                                    "Next: S${nextEpisode.seasonNumber} Ep ${nextEpisode.episodeNumber}"
-                                } else {
-                                    "Latest Episode"
+                                text = when {
+                                    nextEpisode != null -> "Next: S${nextEpisode.seasonNumber} Ep ${nextEpisode.episodeNumber}"
+                                    nextSeasonNumber != null -> "Next Season: S$nextSeasonNumber Ep 1"
+                                    else -> "Latest Episode"
                                 },
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
@@ -1344,10 +1726,12 @@ fun VideoPlayerScreen(
                         FilterChip(
                             selected = selectedServerIndex == idx,
                             onClick = {
-                                selectedServerIndex = idx
-                                playerError = null
-                                isLoadingWebView = true
-                                webViewRef?.loadUrl(url)
+                                if (selectedServerIndex != idx) {
+                                    selectedServerIndex = idx
+                                    playerError = null
+                                    isLoadingWebView = true
+                                    webViewRef?.let { loadStreamUrlIntoWebView(it, url) }
+                                }
                             },
                             label = {
                                 Text(
@@ -1358,7 +1742,8 @@ fun VideoPlayerScreen(
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = RoyalVioletAccent,
                                 selectedLabelColor = MidnightBg
-                            )
+                            ),
+                            modifier = Modifier.testTag("server_chip_$idx")
                         )
                     }
                 }
@@ -1421,7 +1806,7 @@ fun VideoPlayerScreen(
                             )
                             Text(
                                 text = if (isCurrent) {
-                                    "Now Playing • ${ep.durationLabel}"
+                                    "Now Playing • $playerStateLabel"
                                 } else {
                                     listOf(ep.publishedDate, ep.durationLabel)
                                         .filter { it.isNotBlank() }

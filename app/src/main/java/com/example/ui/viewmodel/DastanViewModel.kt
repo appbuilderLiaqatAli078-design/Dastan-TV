@@ -219,10 +219,37 @@ class DastanViewModel(
             repository.ensureUserProfile()
         }
         refreshContent(forceRefresh = false)
+        startAutomaticCatalogDeltaSync()
         viewModelScope.launch {
             isAdmin.collect { adminFlag ->
                 if (adminFlag) {
                     observeUsersForAdmin()
+                }
+            }
+        }
+    }
+
+    private fun startAutomaticCatalogDeltaSync() {
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(10 * 60 * 1000L) // Poll every 10 minutes for newly published dramas/seasons/episodes
+                runCatching {
+                    val delta = contentRepository.syncLatestCatalogDelta()
+                    val (dramas, latestEps) = contentRepository.fetchDramasAndLatestEpisodes(forceRefresh = false)
+                    _rawDramas.value = dramas
+                    _rawLatestEpisodes.value = latestEps
+                    _apiHealth.value = contentRepository.getLatestHealthReport()
+                    _cacheStats.value = contentRepository.getCacheStats()
+                    if (delta.newDramasCount > 0 || delta.newSeasonsCount > 0 || delta.newEpisodesCount > 0) {
+                        _statusMessage.value = buildString {
+                            append("Auto-synced new content: ")
+                            val parts = mutableListOf<String>()
+                            if (delta.newDramasCount > 0) parts.add("${delta.newDramasCount} new drama(s)")
+                            if (delta.newSeasonsCount > 0) parts.add("${delta.newSeasonsCount} new season(s)")
+                            if (delta.newEpisodesCount > 0) parts.add("${delta.newEpisodesCount} new episode(s)")
+                            append(parts.joinToString(", "))
+                        }
+                    }
                 }
             }
         }
@@ -243,14 +270,32 @@ class DastanViewModel(
     fun refreshContent(forceRefresh: Boolean = true) {
         viewModelScope.launch {
             _isLoadingContent.value = true
-            val (dramas, latestEps) = contentRepository.fetchDramasAndLatestEpisodes(forceRefresh)
-            _rawDramas.value = dramas
-            _rawLatestEpisodes.value = latestEps
-            _apiHealth.value = contentRepository.getLatestHealthReport()
-            _cacheStats.value = contentRepository.getCacheStats()
-            _isLoadingContent.value = false
             if (forceRefresh) {
-                _statusMessage.value = "Synced ${dramas.size} dramas & ${latestEps.size} recent episodes."
+                val delta = contentRepository.syncLatestCatalogDelta()
+                val (dramas, latestEps) = contentRepository.fetchDramasAndLatestEpisodes(forceRefresh = false)
+                _rawDramas.value = dramas
+                _rawLatestEpisodes.value = latestEps
+                _apiHealth.value = contentRepository.getLatestHealthReport()
+                _cacheStats.value = contentRepository.getCacheStats()
+                _isLoadingContent.value = false
+                val deltaDetails = buildList {
+                    if (delta.newDramasCount > 0) add("+${delta.newDramasCount} new drama")
+                    if (delta.newSeasonsCount > 0) add("+${delta.newSeasonsCount} new season")
+                    if (delta.newEpisodesCount > 0) add("+${delta.newEpisodesCount} new ep")
+                    if (delta.updatedEpisodesCount > 0) add("${delta.updatedEpisodesCount} updated")
+                }
+                _statusMessage.value = if (deltaDetails.isNotEmpty()) {
+                    "Synced ${dramas.size} dramas (${deltaDetails.joinToString(", ")})"
+                } else {
+                    "Catalog up to date: ${dramas.size} dramas & ${latestEps.size} recent episodes."
+                }
+            } else {
+                val (dramas, latestEps) = contentRepository.fetchDramasAndLatestEpisodes(forceRefresh = false)
+                _rawDramas.value = dramas
+                _rawLatestEpisodes.value = latestEps
+                _apiHealth.value = contentRepository.getLatestHealthReport()
+                _cacheStats.value = contentRepository.getCacheStats()
+                _isLoadingContent.value = false
             }
         }
     }
@@ -263,15 +308,35 @@ class DastanViewModel(
         viewModelScope.launch {
             _isLoadingEpisodes.value = true
             val targetCategoryId = drama.categoryIdForSeason(seasonNumber)
-            val eps = contentRepository.fetchEpisodesForCategory(
+            val expectedCount = drama.seasons.firstOrNull { it.seasonNumber == seasonNumber }?.episodeCount
+                ?: drama.episodeCount
+            val epsPage1 = contentRepository.fetchEpisodesForCategory(
                 categoryId = targetCategoryId,
                 dramaTitle = drama.title,
                 expectedSeasonNumber = seasonNumber,
                 page = 1,
                 forceRefresh = forceRefresh
             )
-            _categoryEpisodesMap.value = _categoryEpisodesMap.value + (targetCategoryId to eps)
-            _categoryPageMap.value = _categoryPageMap.value + (targetCategoryId to 1)
+            var combinedSeasonEps = epsPage1
+            var highestPageLoaded = 1
+
+            // If this season has > 45 episodes, automatically fetch page 2 so Episode 1..N are all present
+            if (epsPage1.size >= 45 || expectedCount > epsPage1.size) {
+                val epsPage2 = contentRepository.fetchEpisodesForCategory(
+                    categoryId = targetCategoryId,
+                    dramaTitle = drama.title,
+                    expectedSeasonNumber = seasonNumber,
+                    page = 2,
+                    forceRefresh = forceRefresh
+                )
+                if (epsPage2.isNotEmpty()) {
+                    combinedSeasonEps = contentRepository.deduplicateSeasonEpisodes(epsPage1 + epsPage2)
+                    highestPageLoaded = 2
+                }
+            }
+
+            _categoryEpisodesMap.value = _categoryEpisodesMap.value + (targetCategoryId to combinedSeasonEps)
+            _categoryPageMap.value = _categoryPageMap.value + (targetCategoryId to highestPageLoaded)
 
             // Also warm cache for remaining seasons of this drama in the background if not yet loaded
             drama.seasons.forEach { season ->
