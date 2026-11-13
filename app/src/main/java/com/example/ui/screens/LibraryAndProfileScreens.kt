@@ -29,7 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.BookmarkRemove
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Favorite
@@ -37,9 +37,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -75,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.model.AppConfig
+import com.example.data.model.CacheStats
 import com.example.data.model.DramaSeries
 import com.example.data.model.EpisodeItem
 import com.example.data.model.FavoriteItem
@@ -106,7 +105,7 @@ fun FavoritesScreen(
             .padding(horizontal = 16.dp)
             .testTag("favorites_screen")
     ) {
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = "My Favorites",
             style = MaterialTheme.typography.headlineLarge,
@@ -114,51 +113,51 @@ fun FavoritesScreen(
         )
         Text(
             text = "Cloud-synced Turkish dramas saved to your personal watchlist",
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             color = SecondaryMutedText
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         if (favorites.isEmpty()) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 36.dp)
-                    .border(1.dp, MidnightBorder, RoundedCornerShape(20.dp)),
-                shape = RoundedCornerShape(20.dp),
+                    .padding(top = 28.dp)
+                    .border(1.dp, MidnightBorder, RoundedCornerShape(14.dp)),
+                shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(28.dp),
+                        .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
                         imageVector = Icons.Default.Favorite,
                         contentDescription = null,
                         tint = RoyalVioletAccent,
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(38.dp)
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         text = "Your Watchlist is Empty",
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         color = PrimaryWhiteText
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Tap the heart icon on any Turkish drama poster to bookmark it here for instant access.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = SecondaryMutedText
                     )
                 }
             }
         } else {
             LazyColumn(
-                contentPadding = PaddingValues(bottom = 100.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                contentPadding = PaddingValues(bottom = 90.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(favorites, key = { it.id.ifBlank { it.dramaId } }) { fav ->
                     Card(
@@ -175,25 +174,26 @@ fun FavoritesScreen(
                                     slug = fav.dramaId,
                                     description = "Saved drama in your personal Favorites.",
                                     posterUrl = fav.posterUrl,
+                                    thumbnailUrl = fav.posterUrl,
                                     episodeCount = fav.episodeCount.toInt(),
                                     seasonNumber = 1,
                                     genreTags = listOf("Historical", "Urdu Sub/Dub")
                                 )
                                 onSelectDrama(matched)
                             }
-                            .border(1.dp, MidnightBorder, RoundedCornerShape(16.dp)),
-                        shape = RoundedCornerShape(16.dp),
+                            .border(1.dp, MidnightBorder, RoundedCornerShape(12.dp)),
+                        shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
                     ) {
                         Row(
-                            modifier = Modifier.padding(12.dp),
+                            modifier = Modifier.padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .width(84.dp)
-                                    .height(106.dp)
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .width(72.dp)
+                                    .height(92.dp)
+                                    .clip(RoundedCornerShape(8.dp))
                             ) {
                                 if (fav.posterUrl.isNotBlank()) {
                                     AsyncImage(
@@ -213,12 +213,14 @@ fun FavoritesScreen(
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.width(14.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = fav.title,
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = PrimaryWhiteText
+                                    color = PrimaryWhiteText,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
@@ -258,7 +260,7 @@ fun DownloadsVaultScreen(
             .padding(horizontal = 16.dp)
             .testTag("downloads_screen")
     ) {
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = "Saved Episodes Vault",
             style = MaterialTheme.typography.headlineLarge,
@@ -266,92 +268,92 @@ fun DownloadsVaultScreen(
         )
         Text(
             text = "Offline episode synopses & instant authorized stream launcher",
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             color = SecondaryMutedText
         )
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Surface(
             color = MidnightSecondaryBg,
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(10.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
             Row(
-                modifier = Modifier.padding(12.dp),
+                modifier = Modifier.padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = Icons.Default.Info,
                     contentDescription = null,
                     tint = OttomanGoldAccent,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Compliance Note: Third-party video streams are never downloaded or rehosted without authorization. Your saved episodes cache full Urdu/English episode notes offline and launch the authorized stream immediately.",
+                    text = "Compliance Note: Third-party video streams are never downloaded or rehosted without authorization. Saved episodes cache synopses offline and launch the authorized stream directly.",
                     style = MaterialTheme.typography.labelSmall,
                     color = SecondaryMutedText
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         if (savedEpisodes.isEmpty()) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 24.dp)
-                    .border(1.dp, MidnightBorder, RoundedCornerShape(20.dp)),
-                shape = RoundedCornerShape(20.dp),
+                    .padding(top = 20.dp)
+                    .border(1.dp, MidnightBorder, RoundedCornerShape(14.dp)),
+                shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(28.dp),
+                        .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
                         imageVector = Icons.Default.DownloadDone,
                         contentDescription = null,
                         tint = RoyalVioletAccent,
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(38.dp)
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
                         text = "No Saved Episodes Yet",
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         color = PrimaryWhiteText
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Tap the bookmark icon on any episode in Drama Details to save its synopsis and direct stream shortcut here.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = SecondaryMutedText
                     )
                 }
             }
         } else {
             LazyColumn(
-                contentPadding = PaddingValues(bottom = 100.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                contentPadding = PaddingValues(bottom = 90.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(savedEpisodes, key = { it.id.ifBlank { it.episodeId } }) { saved ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .border(1.dp, MidnightBorder, RoundedCornerShape(16.dp)),
-                        shape = RoundedCornerShape(16.dp),
+                            .border(1.dp, MidnightBorder, RoundedCornerShape(12.dp)),
+                        shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
+                        Column(modifier = Modifier.padding(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = saved.title,
-                                        style = MaterialTheme.typography.titleMedium,
+                                        style = MaterialTheme.typography.titleSmall,
                                         color = PrimaryWhiteText
                                     )
                                     Text(
@@ -369,16 +371,16 @@ fun DownloadsVaultScreen(
                                 }
                             }
                             if (saved.synopsis.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = saved.synopsis,
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = SecondaryMutedText,
-                                    maxLines = 3,
+                                    maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
                             Button(
                                 onClick = {
                                     onPlaySavedEpisode(
@@ -386,13 +388,14 @@ fun DownloadsVaultScreen(
                                             id = saved.episodeId,
                                             postId = saved.episodeId.removePrefix("ep_").toIntOrNull() ?: 0,
                                             categoryId = saved.categoryId.toInt(),
-                                            dramaTitle = saved.dramaName,
+                                            dramaTitle = saved.dramaName.substringBefore(" (").trim(),
                                             title = saved.title,
                                             episodeNumber = 1,
                                             seasonNumber = 1,
                                             description = saved.synopsis,
                                             publishedDate = "",
                                             posterUrl = saved.posterUrl,
+                                            thumbnailUrl = saved.posterUrl,
                                             primaryEmbedUrl = saved.embedUrl,
                                             backupEmbedUrls = emptyList(),
                                             sourcePostUrl = "",
@@ -404,12 +407,22 @@ fun DownloadsVaultScreen(
                                     containerColor = RoyalVioletAccent,
                                     contentColor = MidnightBg
                                 ),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(38.dp)
                             ) {
-                                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Launch Authorized Stream", fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "Launch Authorized Stream",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
@@ -439,7 +452,7 @@ fun WatchHistoryScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 12.dp),
+                .padding(vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
@@ -456,7 +469,7 @@ fun WatchHistoryScreen(
                     color = OttomanGoldAccent
                 )
                 Text(
-                    text = "${watchHistory.size} episodes tracked in Firestore",
+                    text = "${watchHistory.size} episodes tracked with Season & Episode position",
                     style = MaterialTheme.typography.labelSmall,
                     color = SecondaryMutedText
                 )
@@ -470,14 +483,14 @@ fun WatchHistoryScreen(
             ) {
                 Text(
                     text = "No playback history yet. Start watching any episode!",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = SecondaryMutedText
                 )
             }
         } else {
             LazyColumn(
                 contentPadding = PaddingValues(bottom = 80.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(watchHistory, key = { it.id.ifBlank { it.episodeId } }) { item ->
                     val progress = if (item.durationMs > 0) {
@@ -488,22 +501,25 @@ fun WatchHistoryScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onResumeEpisode(item) }
-                            .border(1.dp, MidnightBorder, RoundedCornerShape(14.dp)),
-                        shape = RoundedCornerShape(14.dp),
+                            .border(1.dp, MidnightBorder, RoundedCornerShape(12.dp)),
+                        shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
+                        Column(modifier = Modifier.padding(12.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
+                                        text = "${item.cleanDramaTitle} • Season ${item.parsedSeasonNumber} • Episode ${item.parsedEpisodeNumber}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = OttomanGoldAccent
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
                                         text = item.episodeTitle,
                                         style = MaterialTheme.typography.titleSmall,
-                                        color = PrimaryWhiteText
-                                    )
-                                    Text(
-                                        text = item.dramaTitle,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = OttomanGoldAccent
+                                        color = PrimaryWhiteText,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                                 IconButton(onClick = { onRemoveHistoryItem(item.episodeId) }) {
@@ -514,12 +530,12 @@ fun WatchHistoryScreen(
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
                             LinearProgressIndicator(
                                 progress = { progress },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(5.dp)
+                                    .height(4.dp)
                                     .clip(RoundedCornerShape(4.dp)),
                                 color = RoyalVioletAccent,
                                 trackColor = MidnightSecondaryBg
@@ -536,6 +552,7 @@ fun WatchHistoryScreen(
 fun ProfileAndSettingsScreen(
     userProfile: UserProfile?,
     appConfig: AppConfig,
+    cacheStats: CacheStats = CacheStats(),
     isAdmin: Boolean,
     flagSecureEnabled: Boolean,
     watchHistoryCount: Int,
@@ -544,6 +561,7 @@ fun ProfileAndSettingsScreen(
     onOpenMembershipPlans: () -> Unit,
     onOpenAdminConsole: () -> Unit,
     onSaveSettings: (displayName: String, quality: String, subtitles: Boolean, flagSecure: Boolean) -> Unit,
+    onClearCache: () -> Unit = {},
     onSignOut: () -> Unit
 ) {
     var displayName by remember(userProfile?.displayName) {
@@ -565,19 +583,19 @@ fun ProfileAndSettingsScreen(
             .background(MidnightBg)
             .padding(horizontal = 16.dp)
             .testTag("profile_screen"),
-        contentPadding = PaddingValues(bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        contentPadding = PaddingValues(bottom = 100.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "Profile & App Settings",
                 style = MaterialTheme.typography.headlineLarge,
                 color = OttomanGoldAccent
             )
             Text(
-                text = "Manage your account, Membership entitlements, and Cinema preferences",
-                style = MaterialTheme.typography.bodyMedium,
+                text = "Manage your account, local cache, and playback preferences",
+                style = MaterialTheme.typography.bodySmall,
                 color = SecondaryMutedText
             )
         }
@@ -587,17 +605,17 @@ fun ProfileAndSettingsScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, RoyalVioletAccent.copy(alpha = 0.4f), RoundedCornerShape(20.dp)),
-                shape = RoundedCornerShape(20.dp),
+                    .border(1.dp, RoyalVioletAccent.copy(alpha = 0.35f), RoundedCornerShape(14.dp)),
+                shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
                             color = MidnightSecondaryBg,
                             shape = CircleShape,
                             modifier = Modifier
-                                .size(58.dp)
+                                .size(48.dp)
                                 .border(1.5.dp, OttomanGoldAccent, CircleShape)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -608,7 +626,7 @@ fun ProfileAndSettingsScreen(
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.width(14.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = userProfile?.displayName?.ifBlank { "Dastan Viewer" } ?: "Dastan Viewer",
@@ -617,15 +635,15 @@ fun ProfileAndSettingsScreen(
                             )
                             Text(
                                 text = userProfile?.email.orEmpty(),
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = SecondaryMutedText
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Surface(
                                     color = if (userProfile?.membershipPlan == "YEARLY_VIP")
                                         OttomanGoldAccent else MidnightSecondaryBg,
-                                    shape = RoundedCornerShape(6.dp)
+                                    shape = RoundedCornerShape(4.dp)
                                 ) {
                                     Text(
                                         text = if (userProfile?.membershipPlan == "YEARLY_VIP")
@@ -634,20 +652,20 @@ fun ProfileAndSettingsScreen(
                                         color = if (userProfile?.membershipPlan == "YEARLY_VIP")
                                             MidnightBg else OttomanGoldAccent,
                                         fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                     )
                                 }
                                 if (isAdmin) {
                                     Surface(
                                         color = RoyalVioletAccent,
-                                        shape = RoundedCornerShape(6.dp)
+                                        shape = RoundedCornerShape(4.dp)
                                     ) {
                                         Text(
                                             text = "AUTHORIZED ADMIN",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MidnightBg,
                                             fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
                                     }
                                 }
@@ -655,22 +673,30 @@ fun ProfileAndSettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
                             onClick = onOpenWatchHistory,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .weight(1f)
+                                .height(40.dp)
                                 .testTag("open_watch_history_button")
                         ) {
-                            Icon(imageVector = Icons.Default.History, contentDescription = null)
+                            Icon(
+                                imageVector = Icons.Default.History,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("History ($watchHistoryCount)")
+                            Text(
+                                text = "History ($watchHistoryCount)",
+                                style = MaterialTheme.typography.titleSmall
+                            )
                         }
                         Button(
                             onClick = onOpenMembershipPlans,
@@ -678,38 +704,109 @@ fun ProfileAndSettingsScreen(
                                 containerColor = OttomanGoldAccent,
                                 contentColor = MidnightBg
                             ),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .weight(1f)
+                                .height(40.dp)
                                 .testTag("open_membership_plans_button")
                         ) {
-                            Icon(imageVector = Icons.Default.WorkspacePremium, contentDescription = null)
+                            Icon(
+                                imageVector = Icons.Default.WorkspacePremium,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Membership", fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Membership",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
 
                     // Admin Mode Workspace Entry (Strictly hidden for normal users)
                     if (isAdmin) {
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
                         Button(
                             onClick = onOpenAdminConsole,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = RoyalVioletAccent,
                                 contentColor = MidnightBg
                             ),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .height(42.dp)
                                 .testTag("profile_admin_dashboard_button")
                         ) {
-                            Icon(imageVector = Icons.Default.AdminPanelSettings, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Default.AdminPanelSettings,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "Launch Admin Dashboard Console",
+                                style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        // Local SQLite & Image Cache Management Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, MidnightBorder, RoundedCornerShape(14.dp)),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Storage,
+                            contentDescription = null,
+                            tint = OttomanGoldAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Offline Catalog & Image Cache",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = PrimaryWhiteText
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Dramas: ${cacheStats.cachedDramasCount} • Seasons: ${cacheStats.cachedSeasonsCount} • Episodes: ${cacheStats.cachedEpisodesCount} • Disk Size: ${cacheStats.formattedDiskSize}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SecondaryMutedText
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = onClearCache,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(40.dp)
+                            .testTag("clear_cache_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CleaningServices,
+                            contentDescription = null,
+                            tint = OttomanGoldAccent,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Clear Metadata & Image Cache",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = OttomanGoldAccent
+                        )
                     }
                 }
             }
@@ -720,17 +817,17 @@ fun ProfileAndSettingsScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, MidnightBorder, RoundedCornerShape(20.dp)),
-                shape = RoundedCornerShape(20.dp),
+                    .border(1.dp, MidnightBorder, RoundedCornerShape(14.dp)),
+                shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Text(
                         text = "Playback & Security Settings",
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         color = PrimaryWhiteText
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     OutlinedTextField(
                         value = displayName,
@@ -746,20 +843,20 @@ fun ProfileAndSettingsScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
                         text = "Default Stream Quality",
                         style = MaterialTheme.typography.titleSmall,
                         color = PrimaryWhiteText
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("AUTO", "1080P", "720P", "480P").forEach { q ->
                             FilterChip(
                                 selected = preferredQuality == q,
                                 onClick = { preferredQuality = q },
-                                label = { Text(q) },
+                                label = { Text(q, style = MaterialTheme.typography.labelMedium) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = RoyalVioletAccent,
                                     selectedLabelColor = MidnightBg
@@ -768,7 +865,7 @@ fun ProfileAndSettingsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -794,7 +891,7 @@ fun ProfileAndSettingsScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -820,7 +917,7 @@ fun ProfileAndSettingsScreen(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     Button(
                         onClick = {
@@ -835,13 +932,17 @@ fun ProfileAndSettingsScreen(
                             containerColor = RoyalVioletAccent,
                             contentColor = MidnightBg
                         ),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .height(42.dp)
                             .testTag("save_profile_settings_button")
                     ) {
-                        Text("Save Preferences", fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Save Preferences",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
@@ -851,24 +952,30 @@ fun ProfileAndSettingsScreen(
         item {
             OutlinedButton(
                 onClick = onSignOut,
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp)
+                    .height(44.dp)
                     .testTag("sign_out_button")
             ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.Logout,
                     contentDescription = "Sign Out",
-                    tint = CrimsonAlert
+                    tint = CrimsonAlert,
+                    modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Sign Out of Dastan TV", color = CrimsonAlert, fontWeight = FontWeight.Bold)
+                Text(
+                    text = "Sign Out of Dastan TV",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = CrimsonAlert,
+                    fontWeight = FontWeight.Bold
+                )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Dastan TV v1.0 • Developer: Liaquat Ali • Content API: giveme5.co",
+                text = "Dastan TV v1.1 • Developer: Liaquat Ali • Content API: giveme5.co",
                 style = MaterialTheme.typography.labelSmall,
                 color = SecondaryMutedText
             )
@@ -894,13 +1001,13 @@ fun MembershipPlansScreen(
             .padding(horizontal = 16.dp)
             .testTag("membership_plans_screen"),
         contentPadding = PaddingValues(bottom = 80.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 12.dp),
+                    .padding(vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBack) {
@@ -931,14 +1038,14 @@ fun MembershipPlansScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .border(
-                        width = 1.5.dp,
+                        width = 1.dp,
                         color = if (currentPlan == "FREE") RoyalVioletAccent else MidnightBorder,
-                        shape = RoundedCornerShape(20.dp)
+                        shape = RoundedCornerShape(14.dp)
                     ),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
             ) {
-                Column(modifier = Modifier.padding(20.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -946,34 +1053,34 @@ fun MembershipPlansScreen(
                     ) {
                         Text(
                             text = "Free Cinema Tier",
-                            style = MaterialTheme.typography.headlineMedium,
+                            style = MaterialTheme.typography.headlineSmall,
                             color = PrimaryWhiteText
                         )
                         if (currentPlan == "FREE") {
                             Surface(
                                 color = RoyalVioletAccent.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(6.dp)
                             ) {
                                 Text(
                                     text = "ACTIVE PLAN",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = RoyalVioletAccent,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "PKR 0 / Forever",
                         style = MaterialTheme.typography.titleLarge,
                         color = OttomanGoldAccent
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("• Standard Turkish Drama Catalog access", color = SecondaryMutedText)
-                    Text("• Urdu Subtitled & Dubbed Episode Streams", color = SecondaryMutedText)
-                    Text("• Cloud Watchlist & Continue Watching sync", color = SecondaryMutedText)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("• Standard Turkish Drama Catalog access", style = MaterialTheme.typography.bodyMedium, color = SecondaryMutedText)
+                    Text("• Urdu Subtitled & Dubbed Episode Streams", style = MaterialTheme.typography.bodyMedium, color = SecondaryMutedText)
+                    Text("• Cloud Watchlist & Continue Watching sync", style = MaterialTheme.typography.bodyMedium, color = SecondaryMutedText)
                 }
             }
         }
@@ -984,14 +1091,14 @@ fun MembershipPlansScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .border(
-                        width = 2.dp,
+                        width = 1.5.dp,
                         color = OttomanGoldAccent,
-                        shape = RoundedCornerShape(20.dp)
+                        shape = RoundedCornerShape(14.dp)
                     ),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = MidnightSecondaryBg)
             ) {
-                Column(modifier = Modifier.padding(20.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1001,65 +1108,66 @@ fun MembershipPlansScreen(
                             Icon(
                                 imageVector = Icons.Default.WorkspacePremium,
                                 contentDescription = null,
-                                tint = OttomanGoldAccent
+                                tint = OttomanGoldAccent,
+                                modifier = Modifier.size(18.dp)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "Yearly VIP Pass",
-                                style = MaterialTheme.typography.headlineMedium,
+                                style = MaterialTheme.typography.headlineSmall,
                                 color = OttomanGoldAccent
                             )
                         }
                         if (currentPlan == "YEARLY_VIP") {
                             Surface(
                                 color = EmeraldSuccess.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(6.dp)
                             ) {
                                 Text(
                                     text = "UNLOCKED",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = EmeraldSuccess,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                 )
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "PKR ${appConfig.yearlyVipPricePkr} / Year",
                         style = MaterialTheme.typography.titleLarge,
                         color = PrimaryWhiteText
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("• Everything in Free Cinema Tier", color = PrimaryWhiteText)
-                    Text("• Early access to VIP-marked historical finales & specials", color = PrimaryWhiteText)
-                    Text("• Priority multi-mirror 1080p stream selection", color = PrimaryWhiteText)
-                    Text("• Golden VIP Profile Badge across Dastan TV", color = PrimaryWhiteText)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("• Everything in Free Cinema Tier", style = MaterialTheme.typography.bodyMedium, color = PrimaryWhiteText)
+                    Text("• Early access to VIP-marked historical finales & specials", style = MaterialTheme.typography.bodyMedium, color = PrimaryWhiteText)
+                    Text("• Priority multi-mirror 1080p stream selection", style = MaterialTheme.typography.bodyMedium, color = PrimaryWhiteText)
+                    Text("• Golden VIP Profile Badge across Dastan TV", style = MaterialTheme.typography.bodyMedium, color = PrimaryWhiteText)
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     Surface(
                         color = MidnightBg.copy(alpha = 0.7f),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            modifier = Modifier.padding(12.dp),
+                            modifier = Modifier.padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Lock,
                                 contentDescription = null,
                                 tint = OttomanGoldAccent,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (currentPlan == "YEARLY_VIP") {
                                     "Your account has active Yearly VIP entitlement granted by Admin."
                                 } else {
-                                    "Online Payment Gateway is currently disabled until billing configuration is finalized. Yearly VIP entitlements are presently assigned directly via Admin Membership Management."
+                                    "Online Payment Gateway is currently disabled until billing configuration is finalized. Yearly VIP entitlements are assigned via Admin Membership Management."
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = SecondaryMutedText

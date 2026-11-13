@@ -681,6 +681,8 @@ fun AdminDashboardScreen(
         var titleInput by remember(target) { mutableStateOf(target.title) }
         var descInput by remember(target) { mutableStateOf(target.description) }
         var posterInput by remember(target) { mutableStateOf(target.posterUrl) }
+        var seasonInput by remember(target) { mutableStateOf(target.seasonNumber.toString()) }
+        var episodeInput by remember(target) { mutableStateOf(target.episodeNumber.toString()) }
 
         AlertDialog(
             onDismissRequest = { editingEpisode = null },
@@ -689,7 +691,23 @@ fun AdminDashboardScreen(
                 Text("Edit Episode #${target.postId}", color = OttomanGoldAccent)
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = seasonInput,
+                            onValueChange = { seasonInput = it.filter { ch -> ch.isDigit() } },
+                            label = { Text("Season #") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = episodeInput,
+                            onValueChange = { episodeInput = it.filter { ch -> ch.isDigit() } },
+                            label = { Text("Episode #") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                     OutlinedTextField(
                         value = titleInput,
                         onValueChange = { titleInput = it },
@@ -706,13 +724,16 @@ fun AdminDashboardScreen(
                         value = descInput,
                         onValueChange = { descInput = it },
                         label = { Text("Episode Synopsis") },
-                        maxLines = 4
+                        maxLines = 3
                     )
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
+                        val correctedSeason = (seasonInput.toIntOrNull() ?: target.seasonNumber).coerceIn(1, 9)
+                        val correctedEpisode = (episodeInput.toIntOrNull() ?: target.episodeNumber).coerceIn(1, 999)
+                        val encodedPriority = (correctedSeason * 1000 + correctedEpisode).coerceIn(1, 10000)
                         onSaveOverride(
                             "EPISODE",
                             target.postId.toString(),
@@ -722,7 +743,7 @@ fun AdminDashboardScreen(
                             target.isHidden,
                             false,
                             target.isVipOnly,
-                            target.episodeNumber
+                            encodedPriority
                         )
                         editingEpisode = null
                     },
@@ -731,7 +752,7 @@ fun AdminDashboardScreen(
                         contentColor = MidnightBg
                     )
                 ) {
-                    Text("Save Episode", fontWeight = FontWeight.Bold)
+                    Text("Save Season & Episode", fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -814,7 +835,7 @@ private fun AdminOverviewSection(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "All visibility, featuring, VIP-gating, and metadata edits are enforced in real-time via Firestore /catalog_overrides with zero-trust admin rules.",
+                    text = "All visibility, featuring, VIP-gating, and Season/Episode corrections are enforced in real-time via Firestore /catalog_overrides with zero-trust admin rules.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = SecondaryMutedText
                 )
@@ -856,11 +877,11 @@ private fun AdminDramaRow(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, MidnightBorder, RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
+            .border(1.dp, MidnightBorder, RoundedCornerShape(14.dp)),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -868,8 +889,13 @@ private fun AdminDramaRow(
                         style = MaterialTheme.typography.titleMedium,
                         color = if (drama.isHidden) SecondaryMutedText else PrimaryWhiteText
                     )
+                    val seasonsSummary = if (drama.seasons.isNotEmpty()) {
+                        drama.seasons.joinToString(", ") { "S${it.seasonNumber}" }
+                    } else {
+                        "S${drama.seasonNumber}"
+                    }
                     Text(
-                        text = "Cat #${drama.categoryId} • ${drama.episodeCount} Episodes • ${if (drama.hasMissingPoster) "Fallback Poster" else "Poster OK"}",
+                        text = "Seasons: $seasonsSummary • ${drama.episodeCount} Episodes • ${if (drama.hasMissingPoster) "Fallback Poster" else "Poster OK"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = SecondaryMutedText
                     )
@@ -882,7 +908,7 @@ private fun AdminDramaRow(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = !drama.isHidden,
@@ -914,18 +940,23 @@ private fun AdminEpisodeRow(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, MidnightBorder, RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
+            .border(1.dp, MidnightBorder, RoundedCornerShape(14.dp)),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = episode.title,
+                        text = "${episode.dramaTitle} • S${episode.seasonNumber} E${episode.episodeNumber}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = OttomanGoldAccent
+                    )
+                    Text(
+                        text = episode.cleanTitle,
                         style = MaterialTheme.typography.titleSmall,
                         color = if (episode.isHidden) SecondaryMutedText else PrimaryWhiteText,
-                        maxLines = 2
+                        maxLines = 1
                     )
                     Text(
                         text = "Post #${episode.postId} • ${if (episode.isPlayable) "Embed Verified (${episode.backupEmbedUrls.size + 1} mirrors)" else "Missing Video Embed"}",
@@ -941,7 +972,7 @@ private fun AdminEpisodeRow(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = !episode.isHidden,

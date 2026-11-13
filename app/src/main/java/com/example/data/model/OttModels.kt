@@ -48,7 +48,38 @@ data class WatchHistoryItem(
     val completed: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
-)
+) {
+    val cleanDramaTitle: String
+        get() = dramaTitle
+            .replace(Regex("\\s*\\(S\\d+\\s*[•·-]?\\s*E\\d+\\)", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s*•\\s*Season\\s*\\d+.*", RegexOption.IGNORE_CASE), "")
+            .trim()
+            .ifBlank { "Turkish Historical Drama" }
+
+    val parsedSeasonNumber: Int
+        get() {
+            val tagMatch = Regex("\\(S(\\d+)\\s*[•·-]?\\s*E(\\d+)\\)", RegexOption.IGNORE_CASE)
+                .find(dramaTitle)
+            if (tagMatch != null) {
+                return tagMatch.groupValues.getOrNull(1)?.toIntOrNull() ?: 1
+            }
+            val titleMatch = Regex("(?:Season|S)\\s*(\\d+)", RegexOption.IGNORE_CASE)
+                .find("$dramaTitle $episodeTitle")
+            return titleMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+        }
+
+    val parsedEpisodeNumber: Int
+        get() {
+            val tagMatch = Regex("\\(S(\\d+)\\s*[•·-]?\\s*E(\\d+)\\)", RegexOption.IGNORE_CASE)
+                .find(dramaTitle)
+            if (tagMatch != null) {
+                return tagMatch.groupValues.getOrNull(2)?.toIntOrNull() ?: 1
+            }
+            val epMatch = Regex("(?:Episode|Ep|E)\\s*(\\d+)", RegexOption.IGNORE_CASE)
+                .find(episodeTitle)
+            return epMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+        }
+}
 
 @IgnoreExtraProperties
 data class SavedEpisodeItem(
@@ -99,6 +130,18 @@ data class AppConfig(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+data class DramaSeason(
+    val seasonNumber: Int,
+    val categoryId: Int,
+    val categoryName: String,
+    val slug: String = "",
+    val episodeCount: Int = 0,
+    val hasExplicitSeasonMetadata: Boolean = true
+) {
+    val displayLabel: String
+        get() = if (hasExplicitSeasonMetadata || seasonNumber > 0) "Season $seasonNumber" else "Episodes"
+}
+
 // Domain models for Content API + Merged Admin Overrides
 data class DramaSeries(
     val id: String,
@@ -115,8 +158,30 @@ data class DramaSeries(
     val isHidden: Boolean = false,
     val isVipOnly: Boolean = false,
     val priorityOrder: Int = 0,
-    val hasMissingPoster: Boolean = false
-)
+    val hasMissingPoster: Boolean = false,
+    val thumbnailUrl: String = posterUrl,
+    val seasons: List<DramaSeason> = listOf(
+        DramaSeason(
+            seasonNumber = seasonNumber.coerceAtLeast(1),
+            categoryId = categoryId,
+            categoryName = title,
+            slug = slug,
+            episodeCount = episodeCount
+        )
+    )
+) {
+    val totalSeasonsCount: Int
+        get() = seasons.size.coerceAtLeast(1)
+
+    val allCategoryIds: List<Int>
+        get() = if (seasons.isNotEmpty()) seasons.map { it.categoryId }.distinct() else listOf(categoryId)
+
+    fun categoryIdForSeason(targetSeason: Int): Int {
+        return seasons.firstOrNull { it.seasonNumber == targetSeason }?.categoryId
+            ?: seasons.firstOrNull()?.categoryId
+            ?: categoryId
+    }
+}
 
 data class EpisodeItem(
     val id: String,
@@ -136,7 +201,11 @@ data class EpisodeItem(
     val isHidden: Boolean = false,
     val isVipOnly: Boolean = false,
     val hasMissingPoster: Boolean = false,
-    val hasMissingVideo: Boolean = false
+    val hasMissingVideo: Boolean = false,
+    val cleanTitle: String = title,
+    val thumbnailUrl: String = posterUrl,
+    val durationLabel: String = "",
+    val hasExplicitSeason: Boolean = true
 )
 
 data class ApiHealthReport(
@@ -153,3 +222,19 @@ data class ApiHealthReport(
     val lastCheckedTimestampMs: Long = 0L,
     val errorMessage: String? = null
 )
+
+data class CacheStats(
+    val cachedDramasCount: Int = 0,
+    val cachedSeasonsCount: Int = 0,
+    val cachedEpisodesCount: Int = 0,
+    val diskCacheBytes: Long = 0L,
+    val lastUpdatedMs: Long = 0L,
+    val cacheTtlMinutes: Int = 30
+) {
+    val formattedDiskSize: String
+        get() {
+            val mb = diskCacheBytes.toDouble() / (1024.0 * 1024.0)
+            return if (mb >= 0.1) String.format(java.util.Locale.US, "%.1f MB", mb)
+            else "${(diskCacheBytes / 1024L).coerceAtLeast(0L)} KB"
+        }
+}

@@ -48,6 +48,7 @@ import androidx.credentials.CredentialManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.auth.GoogleAuthHelper
+import com.example.data.local.LocalCatalogCacheDatabase
 import com.example.data.model.DramaSeries
 import com.example.data.model.EpisodeItem
 import com.example.ui.screens.AdminDashboardScreen
@@ -65,10 +66,8 @@ import com.example.ui.screens.VideoPlayerScreen
 import com.example.ui.screens.WatchHistoryScreen
 import com.example.ui.theme.MidnightBg
 import com.example.ui.theme.MidnightCardSurface
-import com.example.ui.theme.MidnightSecondaryBg
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.OttomanGoldAccent
-import com.example.ui.theme.PrimaryWhiteText
 import com.example.ui.theme.RoyalVioletAccent
 import com.example.ui.theme.SecondaryMutedText
 import com.example.ui.viewmodel.DastanViewModel
@@ -79,6 +78,7 @@ import com.google.firebase.auth.auth
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        LocalCatalogCacheDatabase.ensureCoilConfigured(applicationContext)
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -114,7 +114,10 @@ private enum class BottomNavTab(
 
 private sealed interface ActiveOverlayScreen {
     data object None : ActiveOverlayScreen
-    data class DramaDetail(val drama: DramaSeries) : ActiveOverlayScreen
+    data class DramaDetail(
+        val drama: DramaSeries,
+        val selectedSeason: Int = drama.seasonNumber
+    ) : ActiveOverlayScreen
     data class VideoPlayer(
         val episode: EpisodeItem,
         val siblingEpisodes: List<EpisodeItem>
@@ -197,6 +200,7 @@ private fun AuthenticatedDastanWorkspace(
     val adminDramas by viewModel.adminDramas.collectAsStateWithLifecycle()
     val userLatestEpisodes by viewModel.userLatestEpisodes.collectAsStateWithLifecycle()
     val adminLatestEpisodes by viewModel.adminLatestEpisodes.collectAsStateWithLifecycle()
+    val categoryEpisodesMap by viewModel.categoryEpisodesMap.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val watchHistory by viewModel.watchHistory.collectAsStateWithLifecycle()
     val savedEpisodes by viewModel.savedEpisodes.collectAsStateWithLifecycle()
@@ -204,6 +208,7 @@ private fun AuthenticatedDastanWorkspace(
     val appConfig by viewModel.appConfig.collectAsStateWithLifecycle()
     val adminUsers by viewModel.adminUsers.collectAsStateWithLifecycle()
     val apiHealth by viewModel.apiHealth.collectAsStateWithLifecycle()
+    val cacheStats by viewModel.cacheStats.collectAsStateWithLifecycle()
     val isLoadingContent by viewModel.isLoadingContent.collectAsStateWithLifecycle()
     val isLoadingEpisodes by viewModel.isLoadingEpisodes.collectAsStateWithLifecycle()
     val flagSecureEnabled by viewModel.flagSecureEnabled.collectAsStateWithLifecycle()
@@ -231,15 +236,30 @@ private fun AuthenticatedDastanWorkspace(
         is ActiveOverlayScreen.DramaDetail -> {
             val activeDrama = userDramas.firstOrNull { it.id == currentOverlay.drama.id }
                 ?: currentOverlay.drama
-            val categoryEps = viewModel.getEpisodesForCategory(
-                categoryId = activeDrama.categoryId,
-                includeHidden = false
-            )
+            val activeSeason = currentOverlay.selectedSeason
+            val seasonEps = remember(
+                activeDrama,
+                activeSeason,
+                categoryEpisodesMap,
+                catalogOverrides,
+                userLatestEpisodes
+            ) {
+                viewModel.getEpisodesForDramaSeason(
+                    drama = activeDrama,
+                    seasonNumber = activeSeason,
+                    includeHidden = false
+                )
+            }
             val isFav = favorites.any { it.dramaId == activeDrama.id }
 
             DramaDetailScreen(
                 drama = activeDrama,
-                episodes = categoryEps,
+                selectedSeason = activeSeason,
+                onSelectSeason = { newSeason ->
+                    viewModel.loadEpisodesForDrama(activeDrama, seasonNumber = newSeason)
+                    overlayScreen = currentOverlay.copy(selectedSeason = newSeason)
+                },
+                episodes = seasonEps,
                 isFavorite = isFav,
                 savedEpisodes = savedEpisodes,
                 isLoadingEpisodes = isLoadingEpisodes,
@@ -249,11 +269,13 @@ private fun AuthenticatedDastanWorkspace(
                 onPlayEpisode = { ep ->
                     overlayScreen = ActiveOverlayScreen.VideoPlayer(
                         episode = ep,
-                        siblingEpisodes = categoryEps.ifEmpty { listOf(ep) }
+                        siblingEpisodes = seasonEps.ifEmpty { listOf(ep) }
                     )
                 },
                 onToggleSaveEpisode = { ep -> viewModel.toggleSaveEpisodeToVault(ep) },
-                onLoadMoreEpisodes = { viewModel.loadNextEpisodePage(activeDrama) },
+                onLoadMoreEpisodes = {
+                    viewModel.loadNextEpisodePage(activeDrama, seasonNumber = activeSeason)
+                },
                 onRequestVipUpgrade = { overlayScreen = ActiveOverlayScreen.MembershipPlans }
             )
         }
@@ -286,25 +308,32 @@ private fun AuthenticatedDastanWorkspace(
                 watchHistory = watchHistory,
                 onBack = { overlayScreen = ActiveOverlayScreen.None },
                 onResumeEpisode = { item ->
-                    val ep = EpisodeItem(
+                    val matchedEp = userLatestEpisodes.firstOrNull {
+                        it.id == item.episodeId || "ep_${it.postId}" == item.episodeId
+                    } ?: EpisodeItem(
                         id = item.episodeId,
                         postId = item.episodeId.removePrefix("ep_").toIntOrNull() ?: 0,
                         categoryId = item.categoryId.toInt(),
-                        dramaTitle = item.dramaTitle,
+                        dramaTitle = item.cleanDramaTitle,
                         title = item.episodeTitle,
-                        episodeNumber = 1,
-                        seasonNumber = 1,
+                        episodeNumber = item.parsedEpisodeNumber,
+                        seasonNumber = item.parsedSeasonNumber,
                         description = "Resumed from Watch History",
                         publishedDate = "",
                         posterUrl = item.posterUrl,
+                        thumbnailUrl = item.posterUrl,
                         primaryEmbedUrl = item.embedUrl,
                         backupEmbedUrls = emptyList(),
                         sourcePostUrl = "",
                         isPlayable = item.embedUrl.isNotBlank()
                     )
+                    val seasonSiblings = viewModel.getEpisodesForCategory(
+                        categoryId = matchedEp.categoryId,
+                        includeHidden = false
+                    ).ifEmpty { listOf(matchedEp) }
                     overlayScreen = ActiveOverlayScreen.VideoPlayer(
-                        episode = ep,
-                        siblingEpisodes = userLatestEpisodes.ifEmpty { listOf(ep) }
+                        episode = matchedEp,
+                        siblingEpisodes = seasonSiblings
                     )
                 },
                 onRemoveHistoryItem = { epId -> viewModel.removeWatchHistory(epId) }
@@ -366,7 +395,12 @@ private fun AuthenticatedDastanWorkspace(
                             val selected = selectedTab == tab
                             NavigationBarItem(
                                 selected = selected,
-                                onClick = { selectedTab = tab },
+                                onClick = {
+                                    if (tab == BottomNavTab.PROFILE) {
+                                        viewModel.refreshCacheStats()
+                                    }
+                                    selectedTab = tab
+                                },
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
@@ -404,13 +438,25 @@ private fun AuthenticatedDastanWorkspace(
                                 isAdmin = isAdmin,
                                 isLoading = isLoadingContent,
                                 onSelectDrama = { drama ->
-                                    viewModel.loadEpisodesForDrama(drama)
-                                    overlayScreen = ActiveOverlayScreen.DramaDetail(drama)
+                                    val firstSeason = drama.seasons.firstOrNull()?.seasonNumber ?: drama.seasonNumber
+                                    viewModel.loadEpisodesForDrama(drama, seasonNumber = firstSeason)
+                                    overlayScreen = ActiveOverlayScreen.DramaDetail(
+                                        drama = drama,
+                                        selectedSeason = firstSeason
+                                    )
                                 },
                                 onPlayEpisode = { ep ->
+                                    val siblings = viewModel.getEpisodesForCategory(
+                                        categoryId = ep.categoryId,
+                                        includeHidden = false
+                                    ).ifEmpty {
+                                        userLatestEpisodes.filter {
+                                            it.categoryId == ep.categoryId && it.seasonNumber == ep.seasonNumber
+                                        }.ifEmpty { listOf(ep) }
+                                    }
                                     overlayScreen = ActiveOverlayScreen.VideoPlayer(
                                         episode = ep,
-                                        siblingEpisodes = userLatestEpisodes
+                                        siblingEpisodes = siblings
                                     )
                                 },
                                 onToggleFavorite = { drama -> viewModel.toggleFavorite(drama) },
@@ -430,13 +476,21 @@ private fun AuthenticatedDastanWorkspace(
                                 latestEpisodes = userLatestEpisodes,
                                 favorites = favorites,
                                 onSelectDrama = { drama ->
-                                    viewModel.loadEpisodesForDrama(drama)
-                                    overlayScreen = ActiveOverlayScreen.DramaDetail(drama)
+                                    val firstSeason = drama.seasons.firstOrNull()?.seasonNumber ?: drama.seasonNumber
+                                    viewModel.loadEpisodesForDrama(drama, seasonNumber = firstSeason)
+                                    overlayScreen = ActiveOverlayScreen.DramaDetail(
+                                        drama = drama,
+                                        selectedSeason = firstSeason
+                                    )
                                 },
                                 onPlayEpisode = { ep ->
+                                    val siblings = viewModel.getEpisodesForCategory(
+                                        categoryId = ep.categoryId,
+                                        includeHidden = false
+                                    ).ifEmpty { listOf(ep) }
                                     overlayScreen = ActiveOverlayScreen.VideoPlayer(
                                         episode = ep,
-                                        siblingEpisodes = userLatestEpisodes
+                                        siblingEpisodes = siblings
                                     )
                                 },
                                 onToggleFavorite = { drama -> viewModel.toggleFavorite(drama) }
@@ -448,8 +502,12 @@ private fun AuthenticatedDastanWorkspace(
                                 favorites = favorites,
                                 dramas = userDramas,
                                 onSelectDrama = { drama ->
-                                    viewModel.loadEpisodesForDrama(drama)
-                                    overlayScreen = ActiveOverlayScreen.DramaDetail(drama)
+                                    val firstSeason = drama.seasons.firstOrNull()?.seasonNumber ?: drama.seasonNumber
+                                    viewModel.loadEpisodesForDrama(drama, seasonNumber = firstSeason)
+                                    overlayScreen = ActiveOverlayScreen.DramaDetail(
+                                        drama = drama,
+                                        selectedSeason = firstSeason
+                                    )
                                 },
                                 onRemoveFavorite = { dramaId ->
                                     val dummy = DramaSeries(
@@ -473,9 +531,13 @@ private fun AuthenticatedDastanWorkspace(
                             DownloadsVaultScreen(
                                 savedEpisodes = savedEpisodes,
                                 onPlaySavedEpisode = { ep ->
+                                    val siblings = viewModel.getEpisodesForCategory(
+                                        categoryId = ep.categoryId,
+                                        includeHidden = false
+                                    ).ifEmpty { listOf(ep) }
                                     overlayScreen = ActiveOverlayScreen.VideoPlayer(
                                         episode = ep,
-                                        siblingEpisodes = userLatestEpisodes.ifEmpty { listOf(ep) }
+                                        siblingEpisodes = siblings
                                     )
                                 },
                                 onRemoveSavedEpisode = { epId ->
@@ -504,6 +566,7 @@ private fun AuthenticatedDastanWorkspace(
                             ProfileAndSettingsScreen(
                                 userProfile = userProfile,
                                 appConfig = appConfig,
+                                cacheStats = cacheStats,
                                 isAdmin = isAdmin,
                                 flagSecureEnabled = flagSecureEnabled,
                                 watchHistoryCount = watchHistory.size,
@@ -516,6 +579,7 @@ private fun AuthenticatedDastanWorkspace(
                                 onSaveSettings = { name, quality, subs, secure ->
                                     viewModel.updateUserSettings(name, quality, subs, secure)
                                 },
+                                onClearCache = { viewModel.clearLocalCache() },
                                 onSignOut = {
                                     GoogleAuthHelper.signOut(
                                         credentialManager = credentialManager,

@@ -28,19 +28,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -86,7 +79,6 @@ import com.example.data.model.WatchHistoryItem
 import com.example.ui.theme.MidnightBg
 import com.example.ui.theme.MidnightBorder
 import com.example.ui.theme.MidnightCardSurface
-import com.example.ui.theme.MidnightElevatedCard
 import com.example.ui.theme.MidnightSecondaryBg
 import com.example.ui.theme.OttomanGoldAccent
 import com.example.ui.theme.PrimaryWhiteText
@@ -119,7 +111,9 @@ fun HomeScreen(
     val trendingDramas = remember(dramas) { dramas.take(10) }
     val popularDramas = remember(dramas) { dramas.sortedByDescending { it.episodeCount }.take(10) }
     val recentlyAddedDramas = remember(dramas) { dramas.reversed().take(10) }
-    val recommendedDramas = remember(dramas) { dramas.shuffled().take(10) }
+    val recommendedDramas = remember(dramas) {
+        dramas.sortedByDescending { it.totalSeasonsCount }.take(10)
+    }
 
     var heroIndex by remember { mutableIntStateOf(0) }
     val activeHeroDrama = featuredDramas.getOrNull(heroIndex % maxOf(1, featuredDramas.size))
@@ -129,14 +123,14 @@ fun HomeScreen(
             .fillMaxSize()
             .background(MidnightBg)
             .testTag("home_screen"),
-        contentPadding = PaddingValues(bottom = 100.dp)
+        contentPadding = PaddingValues(bottom = 88.dp)
     ) {
-        // Top App Bar
+        // Compact Top App Bar
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -145,9 +139,9 @@ fun HomeScreen(
                         painter = painterResource(id = R.drawable.img_launcher_foreground),
                         contentDescription = "Dastan TV",
                         modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .border(1.dp, OttomanGoldAccent, RoundedCornerShape(10.dp)),
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, OttomanGoldAccent, RoundedCornerShape(8.dp)),
                         contentScale = ContentScale.Crop
                     )
                     Spacer(modifier = Modifier.width(10.dp))
@@ -162,14 +156,14 @@ fun HomeScreen(
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Surface(
                                     color = OttomanGoldAccent.copy(alpha = 0.2f),
-                                    shape = RoundedCornerShape(6.dp)
+                                    shape = RoundedCornerShape(4.dp)
                                 ) {
                                     Text(
                                         text = "VIP",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = OttomanGoldAccent,
                                         fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                                     )
                                 }
                             }
@@ -187,52 +181,58 @@ fun HomeScreen(
                     if (isAdmin) {
                         Surface(
                             color = OttomanGoldAccent,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(8.dp),
                             modifier = Modifier
                                 .clickable(onClick = onOpenAdminConsole)
                                 .testTag("admin_console_button")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.AdminPanelSettings,
                                     contentDescription = "Admin Console",
                                     tint = MidnightBg,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(15.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
                                     text = "Admin",
-                                    style = MaterialTheme.typography.labelLarge,
+                                    style = MaterialTheme.typography.labelMedium,
                                     color = MidnightBg,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                     }
 
                     IconButton(
                         onClick = onOpenSearch,
-                        modifier = Modifier.testTag("home_search_button")
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("home_search_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Search,
                             contentDescription = "Search Dramas",
-                            tint = PrimaryWhiteText
+                            tint = PrimaryWhiteText,
+                            modifier = Modifier.size(19.dp)
                         )
                     }
 
                     IconButton(
                         onClick = onRefresh,
-                        modifier = Modifier.testTag("home_refresh_button")
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("home_refresh_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "Refresh Catalog",
-                            tint = SecondaryMutedText
+                            tint = SecondaryMutedText,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
@@ -244,30 +244,30 @@ fun HomeScreen(
             item {
                 Surface(
                     color = MidnightSecondaryBg,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .border(1.dp, RoyalVioletAccent.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                        .border(1.dp, RoyalVioletAccent.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
                         .clickable { onOpenMembership() }
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
                             imageVector = Icons.Default.WorkspacePremium,
                             contentDescription = null,
                             tint = OttomanGoldAccent,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = appConfig.announcementBanner,
-                            style = MaterialTheme.typography.labelLarge,
+                            style = MaterialTheme.typography.labelMedium,
                             color = PrimaryWhiteText,
                             modifier = Modifier.weight(1f),
-                            maxLines = 2,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
@@ -292,10 +292,14 @@ fun HomeScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(260.dp),
+                        .height(220.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator(color = RoyalVioletAccent)
+                    CircularProgressIndicator(
+                        color = RoyalVioletAccent,
+                        modifier = Modifier.size(28.dp),
+                        strokeWidth = 2.5.dp
+                    )
                 }
             }
         }
@@ -305,13 +309,13 @@ fun HomeScreen(
             item {
                 SectionHeader(
                     title = "Continue Watching",
-                    subtitle = "Pick up your episode right where you paused",
+                    subtitle = "Resume exact drama, season & episode",
                     actionLabel = "History",
                     onActionClick = onOpenWatchHistory
                 )
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(watchHistory.take(10), key = { it.id.ifBlank { it.episodeId } }) { historyItem ->
                         ContinueWatchingCard(
@@ -323,13 +327,14 @@ fun HomeScreen(
                                     id = historyItem.episodeId,
                                     postId = historyItem.episodeId.removePrefix("ep_").toIntOrNull() ?: 0,
                                     categoryId = historyItem.categoryId.toInt(),
-                                    dramaTitle = historyItem.dramaTitle,
+                                    dramaTitle = historyItem.cleanDramaTitle,
                                     title = historyItem.episodeTitle,
-                                    episodeNumber = 1,
-                                    seasonNumber = 1,
+                                    episodeNumber = historyItem.parsedEpisodeNumber,
+                                    seasonNumber = historyItem.parsedSeasonNumber,
                                     description = "Resume ${historyItem.episodeTitle}",
                                     publishedDate = "",
                                     posterUrl = historyItem.posterUrl,
+                                    thumbnailUrl = historyItem.posterUrl,
                                     primaryEmbedUrl = historyItem.embedUrl,
                                     backupEmbedUrls = emptyList(),
                                     sourcePostUrl = "",
@@ -352,7 +357,7 @@ fun HomeScreen(
                 )
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(latestEpisodes.take(14), key = { it.id }) { ep ->
                         EpisodeHorizontalCard(
@@ -385,7 +390,7 @@ fun HomeScreen(
             item {
                 SectionHeader(
                     title = "Popular Dramas",
-                    subtitle = "Complete multi-episode Ottoman & Seljuk sagas"
+                    subtitle = "Complete multi-season Ottoman & Seljuk sagas"
                 )
                 DramaRowList(
                     dramas = popularDramas,
@@ -401,7 +406,7 @@ fun HomeScreen(
             item {
                 SectionHeader(
                     title = "Recently Added",
-                    subtitle = "Freshly cataloged seasons and historical specials"
+                    subtitle = "Freshly cataloged series and historical specials"
                 )
                 DramaRowList(
                     dramas = recentlyAddedDramas,
@@ -417,7 +422,7 @@ fun HomeScreen(
             item {
                 SectionHeader(
                     title = "Recommended for You",
-                    subtitle = "Curated for fans of epic storytelling & Urdu dubbing"
+                    subtitle = "Multi-season historical epics in Urdu"
                 )
                 DramaRowList(
                     dramas = recommendedDramas,
@@ -443,18 +448,19 @@ private fun HeroFeaturedCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp)
-            .height(310.dp)
-            .border(1.dp, OttomanGoldAccent.copy(alpha = 0.45f), RoundedCornerShape(24.dp))
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .height(250.dp)
+            .border(1.dp, OttomanGoldAccent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
             .clickable(onClick = onWatchClick)
             .testTag("hero_featured_card"),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            if (drama.posterUrl.isNotBlank()) {
+            val heroImg = drama.posterUrl.ifBlank { drama.thumbnailUrl }
+            if (heroImg.isNotBlank()) {
                 AsyncImage(
-                    model = drama.posterUrl,
+                    model = heroImg,
                     contentDescription = drama.title,
                     placeholder = painterResource(id = R.drawable.img_hero_banner),
                     error = painterResource(id = R.drawable.img_hero_banner),
@@ -476,7 +482,7 @@ private fun HeroFeaturedCard(
                     .background(
                         Brush.verticalGradient(
                             colors = listOf(
-                                MidnightBg.copy(alpha = 0.25f),
+                                MidnightBg.copy(alpha = 0.15f),
                                 MidnightBg.copy(alpha = 0.65f),
                                 MidnightBg.copy(alpha = 0.96f)
                             )
@@ -487,73 +493,78 @@ private fun HeroFeaturedCard(
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(20.dp)
+                    .padding(16.dp)
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
                         color = OttomanGoldAccent,
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(4.dp)
                     ) {
                         Text(
                             text = "FEATURED",
                             style = MaterialTheme.typography.labelSmall,
                             color = MidnightBg,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
                     Surface(
-                        color = RoyalVioletAccent.copy(alpha = 0.25f),
-                        shape = RoundedCornerShape(6.dp)
+                        color = MidnightSecondaryBg.copy(alpha = 0.9f),
+                        shape = RoundedCornerShape(4.dp)
                     ) {
+                        val seasonBadge = if (drama.totalSeasonsCount > 1) {
+                            "${drama.totalSeasonsCount} SEASONS • ${drama.episodeCount} EPS"
+                        } else {
+                            "${drama.episodeCount} EPISODES"
+                        }
                         Text(
-                            text = "${drama.episodeCount} EPISODES",
+                            text = seasonBadge,
                             style = MaterialTheme.typography.labelSmall,
                             color = PrimaryWhiteText,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
                     if (drama.isVipOnly) {
                         Surface(
-                            color = OttomanGoldAccent.copy(alpha = 0.25f),
-                            shape = RoundedCornerShape(6.dp)
+                            color = OttomanGoldAccent.copy(alpha = 0.22f),
+                            shape = RoundedCornerShape(4.dp)
                         ) {
                             Text(
-                                text = "YEARLY VIP",
+                                text = "VIP",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = OttomanGoldAccent,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
                     text = drama.title,
-                    style = MaterialTheme.typography.headlineLarge,
+                    style = MaterialTheme.typography.displayMedium,
                     color = PrimaryWhiteText,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
 
                 Text(
                     text = drama.genreTags.joinToString(" • "),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     color = OttomanGoldAccent
                 )
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(
@@ -562,13 +573,17 @@ private fun HeroFeaturedCard(
                             containerColor = RoyalVioletAccent,
                             contentColor = MidnightBg
                         ),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
+                            .height(40.dp)
                             .testTag("hero_watch_now_button")
                     ) {
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp)
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "Watch Now",
@@ -579,26 +594,28 @@ private fun HeroFeaturedCard(
 
                     OutlinedButton(
                         onClick = onToggleFavorite,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
-                            .height(48.dp)
+                            .height(40.dp)
                             .testTag("hero_favorite_button")
                     ) {
                         Icon(
                             imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                             contentDescription = "Favorite",
-                            tint = if (isFavorite) OttomanGoldAccent else PrimaryWhiteText
+                            tint = if (isFavorite) OttomanGoldAccent else PrimaryWhiteText,
+                            modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = if (isFavorite) "Saved" else "My List",
+                            style = MaterialTheme.typography.titleSmall,
                             color = PrimaryWhiteText
                         )
                     }
                 }
 
                 if (totalFeatured > 1) {
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center
@@ -606,9 +623,9 @@ private fun HeroFeaturedCard(
                         for (idx in 0 until totalFeatured) {
                             Box(
                                 modifier = Modifier
-                                    .padding(horizontal = 4.dp)
-                                    .height(6.dp)
-                                    .width(if (idx == activeIndex) 22.dp else 6.dp)
+                                    .padding(horizontal = 3.dp)
+                                    .height(5.dp)
+                                    .width(if (idx == activeIndex) 18.dp else 5.dp)
                                     .clip(CircleShape)
                                     .background(
                                         if (idx == activeIndex) OttomanGoldAccent
@@ -634,7 +651,7 @@ private fun SectionHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 22.dp, bottom = 10.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -657,7 +674,7 @@ private fun SectionHeader(
                 color = OttomanGoldAccent,
                 modifier = Modifier
                     .clickable(onClick = onActionClick)
-                    .padding(8.dp)
+                    .padding(6.dp)
             )
         }
     }
@@ -672,7 +689,7 @@ private fun DramaRowList(
 ) {
     LazyRow(
         contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         items(dramas, key = { it.id }) { drama ->
             val isFav = favorites.any { it.dramaId == drama.id }
@@ -696,22 +713,23 @@ fun DramaPosterCard(
 ) {
     Card(
         modifier = modifier
-            .width(156.dp)
+            .width(138.dp)
             .clickable(onClick = onClick)
-            .border(1.dp, MidnightBorder, RoundedCornerShape(16.dp))
+            .border(1.dp, MidnightBorder, RoundedCornerShape(12.dp))
             .testTag("drama_card_${drama.categoryId}"),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
+                    .height(174.dp)
             ) {
-                if (drama.posterUrl.isNotBlank()) {
+                val thumbUrl = drama.thumbnailUrl.ifBlank { drama.posterUrl }
+                if (thumbUrl.isNotBlank()) {
                     AsyncImage(
-                        model = drama.posterUrl,
+                        model = thumbUrl,
                         contentDescription = drama.title,
                         placeholder = painterResource(id = R.drawable.img_onboarding_cinema),
                         error = painterResource(id = R.drawable.img_onboarding_cinema),
@@ -734,7 +752,7 @@ fun DramaPosterCard(
                             Brush.verticalGradient(
                                 colors = listOf(
                                     Color.Transparent,
-                                    MidnightBg.copy(alpha = 0.85f)
+                                    MidnightBg.copy(alpha = 0.8f)
                                 )
                             )
                         )
@@ -742,16 +760,21 @@ fun DramaPosterCard(
 
                 Surface(
                     color = MidnightSecondaryBg.copy(alpha = 0.9f),
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(6.dp),
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(8.dp)
+                        .padding(6.dp)
                 ) {
+                    val badgeText = if (drama.totalSeasonsCount > 1) {
+                        "${drama.totalSeasonsCount} Seasons"
+                    } else {
+                        "${drama.episodeCount} Eps"
+                    }
                     Text(
-                        text = "${drama.episodeCount} Eps",
+                        text = badgeText,
                         style = MaterialTheme.typography.labelSmall,
                         color = OttomanGoldAccent,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
 
@@ -759,36 +782,36 @@ fun DramaPosterCard(
                     onClick = onToggleFavorite,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .size(36.dp)
+                        .size(32.dp)
                 ) {
                     Icon(
                         imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                         contentDescription = "Toggle Favorite",
                         tint = if (isFavorite) OttomanGoldAccent else PrimaryWhiteText,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 }
 
                 if (drama.isVipOnly) {
                     Surface(
                         color = OttomanGoldAccent,
-                        shape = RoundedCornerShape(6.dp),
+                        shape = RoundedCornerShape(4.dp),
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .padding(8.dp)
+                            .padding(6.dp)
                     ) {
                         Text(
                             text = "VIP",
                             style = MaterialTheme.typography.labelSmall,
                             color = MidnightBg,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                         )
                     }
                 }
             }
 
-            Column(modifier = Modifier.padding(10.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp)) {
                 Text(
                     text = drama.title,
                     style = MaterialTheme.typography.titleSmall,
@@ -797,11 +820,17 @@ fun DramaPosterCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
+                val seasonSummary = if (drama.totalSeasonsCount > 1) {
+                    "${drama.totalSeasonsCount} Seasons • ${drama.episodeCount} Eps"
+                } else {
+                    "Season ${drama.seasonNumber} • ${drama.episodeCount} Eps"
+                }
                 Text(
-                    text = "Season ${drama.seasonNumber} • Urdu",
+                    text = seasonSummary,
                     style = MaterialTheme.typography.labelSmall,
                     color = SecondaryMutedText,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -815,23 +844,24 @@ private fun EpisodeHorizontalCard(
 ) {
     Card(
         modifier = Modifier
-            .width(240.dp)
+            .width(206.dp)
             .clickable(onClick = onClick)
-            .border(1.dp, MidnightBorder, RoundedCornerShape(16.dp))
+            .border(1.dp, MidnightBorder, RoundedCornerShape(12.dp))
             .testTag("latest_episode_card_${episode.postId}"),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(135.dp)
+                    .height(114.dp)
             ) {
-                if (episode.posterUrl.isNotBlank()) {
+                val thumb = episode.thumbnailUrl.ifBlank { episode.posterUrl }
+                if (thumb.isNotBlank()) {
                     AsyncImage(
-                        model = episode.posterUrl,
-                        contentDescription = episode.title,
+                        model = thumb,
+                        contentDescription = episode.cleanTitle,
                         placeholder = painterResource(id = R.drawable.img_hero_banner),
                         error = painterResource(id = R.drawable.img_hero_banner),
                         modifier = Modifier.fillMaxSize(),
@@ -840,7 +870,7 @@ private fun EpisodeHorizontalCard(
                 } else {
                     Image(
                         painter = painterResource(id = R.drawable.img_hero_banner),
-                        contentDescription = episode.title,
+                        contentDescription = episode.cleanTitle,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
@@ -849,19 +879,20 @@ private fun EpisodeHorizontalCard(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(MidnightBg.copy(alpha = 0.35f)),
+                        .background(MidnightBg.copy(alpha = 0.32f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Surface(
                         color = RoyalVioletAccent.copy(alpha = 0.9f),
                         shape = CircleShape,
-                        modifier = Modifier.size(42.dp)
+                        modifier = Modifier.size(34.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Default.PlayArrow,
                                 contentDescription = "Play Episode",
-                                tint = MidnightBg
+                                tint = MidnightBg,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -869,34 +900,46 @@ private fun EpisodeHorizontalCard(
 
                 Surface(
                     color = MidnightBg.copy(alpha = 0.85f),
-                    shape = RoundedCornerShape(6.dp),
+                    shape = RoundedCornerShape(4.dp),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(8.dp)
+                        .padding(6.dp)
                 ) {
                     Text(
-                        text = "EP ${episode.episodeNumber}",
+                        text = "S${episode.seasonNumber} • EP ${episode.episodeNumber}",
                         style = MaterialTheme.typography.labelSmall,
                         color = OttomanGoldAccent,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                     )
                 }
             }
 
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(modifier = Modifier.padding(9.dp)) {
                 Text(
-                    text = episode.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = PrimaryWhiteText,
-                    maxLines = 2,
+                    text = episode.dramaTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = OttomanGoldAccent,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(1.dp))
                 Text(
-                    text = episode.publishedDate.ifBlank { "Urdu Subtitled HD" },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = SecondaryMutedText
+                    text = episode.cleanTitle,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = PrimaryWhiteText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = listOf(episode.publishedDate, episode.durationLabel)
+                        .filter { it.isNotBlank() }
+                        .joinToString(" • ")
+                        .ifBlank { "Urdu Subtitled HD" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SecondaryMutedText,
+                    maxLines = 1
                 )
             }
         }
@@ -915,17 +958,17 @@ private fun ContinueWatchingCard(
 
     Card(
         modifier = Modifier
-            .width(220.dp)
+            .width(196.dp)
             .clickable(onClick = onClick)
-            .border(1.dp, RoyalVioletAccent.copy(alpha = 0.4f), RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
+            .border(1.dp, RoyalVioletAccent.copy(alpha = 0.35f), RoundedCornerShape(12.dp)),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MidnightCardSurface)
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(118.dp)
+                    .height(104.dp)
             ) {
                 if (item.posterUrl.isNotBlank()) {
                     AsyncImage(
@@ -947,14 +990,29 @@ private fun ContinueWatchingCard(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(MidnightBg.copy(alpha = 0.4f)),
+                        .background(MidnightBg.copy(alpha = 0.38f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Resume",
                         tint = OttomanGoldAccent,
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(30.dp)
+                    )
+                }
+                Surface(
+                    color = MidnightBg.copy(alpha = 0.85f),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp)
+                ) {
+                    Text(
+                        text = "S${item.parsedSeasonNumber} • EP ${item.parsedEpisodeNumber}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = OttomanGoldAccent,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                     )
                 }
             }
@@ -962,22 +1020,25 @@ private fun ContinueWatchingCard(
                 progress = { progressFraction },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(4.dp),
+                    .height(3.dp),
                 color = RoyalVioletAccent,
                 trackColor = MidnightSecondaryBg
             )
-            Column(modifier = Modifier.padding(10.dp)) {
+            Column(modifier = Modifier.padding(9.dp)) {
                 Text(
-                    text = item.episodeTitle,
+                    text = item.cleanDramaTitle,
                     style = MaterialTheme.typography.titleSmall,
                     color = PrimaryWhiteText,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                Spacer(modifier = Modifier.height(1.dp))
                 Text(
-                    text = "${(progressFraction * 100).toInt()}% watched • Resume",
+                    text = "Season ${item.parsedSeasonNumber} • Ep ${item.parsedEpisodeNumber} • ${(progressFraction * 100).toInt()}%",
                     style = MaterialTheme.typography.labelSmall,
-                    color = OttomanGoldAccent
+                    color = OttomanGoldAccent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -1025,29 +1086,35 @@ fun ExploreAndCategoriesScreen(
             .padding(horizontal = 16.dp)
             .testTag("explore_screen")
     ) {
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = "Explore & Categories",
             style = MaterialTheme.typography.headlineLarge,
             color = OttomanGoldAccent
         )
         Text(
-            text = "Search across ${dramas.size} Turkish drama categories and Urdu-subtitled episodes",
-            style = MaterialTheme.typography.bodyMedium,
+            text = "Browse ${dramas.size} unified Turkish drama series and multi-season catalogs",
+            style = MaterialTheme.typography.bodySmall,
             color = SecondaryMutedText
         )
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Search Sultan Fateh, Osman, Barbaroslar, Episode #...") },
+            placeholder = {
+                Text(
+                    text = "Search Mehmed, Osman, Ertugrul, Episode #...",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Default.Search,
                     contentDescription = "Search",
-                    tint = RoyalVioletAccent
+                    tint = RoyalVioletAccent,
+                    modifier = Modifier.size(18.dp)
                 )
             },
             trailingIcon = {
@@ -1056,13 +1123,14 @@ fun ExploreAndCategoriesScreen(
                         Icon(
                             imageVector = Icons.Default.Clear,
                             contentDescription = "Clear search",
-                            tint = SecondaryMutedText
+                            tint = SecondaryMutedText,
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             },
             singleLine = true,
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = RoyalVioletAccent,
                 unfocusedBorderColor = MidnightBorder,
@@ -1076,7 +1144,7 @@ fun ExploreAndCategoriesScreen(
                 .testTag("explore_search_input")
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         Row(
             modifier = Modifier
@@ -1089,7 +1157,7 @@ fun ExploreAndCategoriesScreen(
                 FilterChip(
                     selected = selected,
                     onClick = { selectedGenre = genre },
-                    label = { Text(genre) },
+                    label = { Text(genre, style = MaterialTheme.typography.labelLarge) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = RoyalVioletAccent,
                         selectedLabelColor = MidnightBg,
@@ -1100,18 +1168,18 @@ fun ExploreAndCategoriesScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         if (matchingEpisodes.isNotEmpty()) {
             Text(
                 text = "Matching Episodes (${matchingEpisodes.size})",
                 style = MaterialTheme.typography.titleMedium,
                 color = OttomanGoldAccent,
-                modifier = Modifier.padding(bottom = 8.dp)
+                modifier = Modifier.padding(bottom = 6.dp)
             )
             LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.padding(bottom = 14.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.padding(bottom = 12.dp)
             ) {
                 items(matchingEpisodes, key = { it.id }) { ep ->
                     EpisodeHorizontalCard(
@@ -1123,10 +1191,10 @@ fun ExploreAndCategoriesScreen(
         }
 
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 152.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 100.dp),
+            columns = GridCells.Adaptive(minSize = 136.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 96.dp),
             modifier = Modifier.fillMaxSize()
         ) {
             items(filteredDramas, key = { it.id }) { drama ->

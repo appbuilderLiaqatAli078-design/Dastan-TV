@@ -101,7 +101,6 @@ class DastanRepository(private val db: FirebaseFirestore) {
                 val resolvedPlan = if (isVerifiedAdmin) "YEARLY_VIP" else profile.membershipPlan.ifBlank { "FREE" }
 
                 val updates = mutableMapOf<String, Any>(
-                    "email" to email,
                     "displayName" to resolvedDisplayName,
                     "photoUrl" to resolvedPhotoUrl,
                     "updatedAt" to FieldValue.serverTimestamp()
@@ -115,7 +114,7 @@ class DastanRepository(private val db: FirebaseFirestore) {
                 return@runCatching profile.copy(
                     id = uid,
                     userId = uid,
-                    email = email,
+                    email = profile.email.ifBlank { email },
                     displayName = resolvedDisplayName,
                     photoUrl = resolvedPhotoUrl,
                     role = resolvedRole,

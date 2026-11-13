@@ -1,11 +1,16 @@
 package com.example.data.remote
 
+import android.content.Context
 import android.text.Html
 import android.util.Log
+import com.example.data.local.LocalCatalogCacheDatabase
 import com.example.data.model.ApiHealthReport
+import com.example.data.model.CacheStats
 import com.example.data.model.CatalogOverride
+import com.example.data.model.DramaSeason
 import com.example.data.model.DramaSeries
 import com.example.data.model.EpisodeItem
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.Cache
 import okhttp3.OkHttpClient
 import org.json.JSONArray
 import org.json.JSONObject
@@ -26,7 +32,7 @@ interface WordPressRawApi {
     suspend fun getCategories(
         @Query("per_page") perPage: Int = 100,
         @Query("page") page: Int = 1
-    ): Response< okhttp3.ResponseBody >
+    ): Response<okhttp3.ResponseBody>
 
     @GET("posts")
     suspend fun getPostsByCategory(
@@ -34,21 +40,32 @@ interface WordPressRawApi {
         @Query("per_page") perPage: Int = 50,
         @Query("page") page: Int = 1,
         @Query("_embed") embed: Int = 1
-    ): Response< okhttp3.ResponseBody >
+    ): Response<okhttp3.ResponseBody>
 
     @GET("posts")
     suspend fun getLatestPosts(
         @Query("per_page") perPage: Int = 40,
         @Query("page") page: Int = 1,
         @Query("_embed") embed: Int = 1
-    ): Response< okhttp3.ResponseBody >
+    ): Response<okhttp3.ResponseBody>
 }
 
-class WordPressContentRepository {
+class WordPressContentRepository(context: Context? = null) {
+
+    private val appContext: Context? = context?.applicationContext
+    private val localCacheDb: LocalCatalogCacheDatabase? = appContext?.let {
+        LocalCatalogCacheDatabase.getInstance(it)
+    }
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
+        .apply {
+            appContext?.let { ctx ->
+                val httpCacheDir = File(ctx.cacheDir, LocalCatalogCacheDatabase.HTTP_CACHE_DIR)
+                cache(Cache(httpCacheDir, 20L * 1024L * 1024L)) // 20 MB HTTP response cache
+            }
+        }
         .build()
 
     private val api: WordPressRawApi = Retrofit.Builder()
@@ -58,8 +75,11 @@ class WordPressContentRepository {
         .create(WordPressRawApi::class.java)
 
     private val cacheMutex = Mutex()
+    private val categoryFetchLocks = ConcurrentHashMap<String, Mutex>()
     private var cachedCategories: List<DramaSeries> = emptyList()
     private val cachedCategoryEpisodes = ConcurrentHashMap<Int, List<EpisodeItem>>()
+    private val categoryToSeasonMap = ConcurrentHashMap<Int, Int>()
+    private val categoryToDramaTitleMap = ConcurrentHashMap<Int, String>()
     private var cachedLatestEpisodes: List<EpisodeItem> = emptyList()
     private var lastCacheTimestampMs: Long = 0L
     private var lastHealthReport: ApiHealthReport = ApiHealthReport()
@@ -67,7 +87,7 @@ class WordPressContentRepository {
     companion object {
         private const val TAG = "WPContentRepo"
         const val BASE_URL = "https://giveme5.co/wp-json/wp/v2/"
-        private const val CACHE_TTL_MS = 10 * 60 * 1000L // 10 minutes server/client cache
+        private const val CACHE_TTL_MS = 30 * 60 * 1000L // 30 minutes metadata cache
 
         private val IFRAME_SRC_REGEX = Regex(
             """<iframe[^>]+src=["']([^"']+)["']""",
@@ -78,18 +98,220 @@ class WordPressContentRepository {
             RegexOption.IGNORE_CASE
         )
         private val EPISODE_NUM_REGEX = Regex(
-            """(?:Episode|Ep|Bolum)\s*(\d+)""",
+            """(?:Episode|Ep|Bolum|Bölüm)\s*#?\s*0*(\d+)""",
             RegexOption.IGNORE_CASE
         )
         private val SEASON_NUM_REGEX = Regex(
-            """Season\s*(\d+)""",
+            """(?:Season|Sezon|\bS)\s*0*(\d+)""",
             RegexOption.IGNORE_CASE
         )
+        private val TRAILING_NUM_REGEX = Regex(
+            """\s+(\d+)\s*$"""
+        )
+        private val DURATION_REGEX = Regex(
+            """\b(\d{1,2}\s*(?:h|hr|hrs)\s*\d{0,2}\s*(?:m|min|mins)?|\d{2,3}\s*(?:min|mins|minutes))\b""",
+            RegexOption.IGNORE_CASE
+        )
+
+        data class CanonicalDramaResolution(
+            val dramaKey: String,
+            val canonicalTitle: String,
+            val seasonNumber: Int,
+            val hasExplicitSeason: Boolean
+        )
+
+        fun resolveCanonicalDrama(rawCategoryName: String, slug: String): CanonicalDramaResolution? {
+            val cleanedName = rawCategoryName.trim()
+            val lowerName = cleanedName.lowercase()
+            val lowerSlug = slug.lowercase().trim()
+
+            // Exclude non-drama or catch-all categories
+            if (cleanedName.isBlank() ||
+                lowerSlug == "uncategorized" ||
+                lowerSlug == "blog" ||
+                lowerName == "blog" ||
+                lowerSlug == "ko-6" // WordPress ID=1 default catch-all with mixed posts
+            ) {
+                return null
+            }
+
+            // Extract season number from category name or slug
+            val explicitSeasonMatch = SEASON_NUM_REGEX.find(cleanedName)
+                ?: SEASON_NUM_REGEX.find(lowerSlug.replace("-", " "))
+            val trailingNumMatch = TRAILING_NUM_REGEX.find(cleanedName)
+            val resolvedSeason = explicitSeasonMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
+                ?: trailingNumMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
+                ?: 1
+            val hasExplicitSeason = explicitSeasonMatch != null || trailingNumMatch != null
+
+            return when {
+                lowerName.contains("mehmed") ||
+                    lowerName.contains("muhammad fateh") ||
+                    lowerName.contains("m fateh") ||
+                    lowerSlug.contains("fateh") ||
+                    lowerSlug.contains("mehmed") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "sultan_mehmed_fateh",
+                        canonicalTitle = "Sultan Mehmed Fateh",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = true
+                    )
+                }
+
+                lowerName.contains("osman") && !lowerName.contains("orhan") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "kurulus_osman",
+                        canonicalTitle = "Kurulus Osman",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = true
+                    )
+                }
+
+                lowerName.contains("orhan") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "kurulus_orhan",
+                        canonicalTitle = "Kurulus Orhan",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = hasExplicitSeason
+                    )
+                }
+
+                lowerName.contains("ertugrul") || lowerSlug.startsWith("de-") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "dirilis_ertugrul",
+                        canonicalTitle = "Dirilis Ertugrul",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = true
+                    )
+                }
+
+                lowerName.contains("barbaros") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "barbaroslar",
+                        canonicalTitle = "Barbaroslar",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = true
+                    )
+                }
+
+                lowerName.contains("great seljuk") || lowerName.contains("seljuk") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "great_seljuk",
+                        canonicalTitle = "Great Seljuk",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = true
+                    )
+                }
+
+                lowerName.contains("salahuddin") || lowerName.contains("ayubi") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "salahuddin_ayubi",
+                        canonicalTitle = "Salahuddin Ayubi",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = true
+                    )
+                }
+
+                lowerName.contains("sultan ah") || lowerName.contains("abdulhamid") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "sultan_abdulhamid",
+                        canonicalTitle = "Sultan Abdulhamid",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = true
+                    )
+                }
+
+                lowerName.contains("mehmetcik") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "mehmetcik",
+                        canonicalTitle = "Mehmetcik",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = hasExplicitSeason
+                    )
+                }
+
+                lowerName.contains("mendirman") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "mendirman",
+                        canonicalTitle = "Mendirman Jaloliddin",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = hasExplicitSeason
+                    )
+                }
+
+                lowerName.contains("mavera") -> {
+                    CanonicalDramaResolution(
+                        dramaKey = "mavera",
+                        canonicalTitle = "Mavera",
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = hasExplicitSeason
+                    )
+                }
+
+                else -> {
+                    val baseTitle = cleanedName
+                        .replace(Regex("""(?i)\b(?:season|sezon|s)\s*\d+\b"""), "")
+                        .replace(Regex("""\s+\d+\s*$"""), "")
+                        .trim()
+                        .ifBlank { cleanedName }
+                    val key = baseTitle.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                    CanonicalDramaResolution(
+                        dramaKey = key.ifBlank { "drama_${slug.lowercase()}" },
+                        canonicalTitle = baseTitle,
+                        seasonNumber = resolvedSeason,
+                        hasExplicitSeason = hasExplicitSeason
+                    )
+                }
+            }
+        }
+
+        fun doesPostBelongToDrama(postTitle: String, targetDramaTitle: String): Boolean {
+            val lowerPost = postTitle.lowercase()
+            val lowerTarget = targetDramaTitle.lowercase()
+
+            if (lowerTarget.contains("mehmed") || lowerTarget.contains("fateh")) {
+                return lowerPost.contains("mehmed") ||
+                    lowerPost.contains("fateh") ||
+                    lowerPost.contains("mehmet")
+            }
+            if (lowerTarget.contains("osman")) {
+                if (lowerPost.contains("orhan") && !lowerPost.contains("osman")) return false
+                return true
+            }
+            if (lowerTarget.contains("orhan")) {
+                if (lowerPost.contains("osman") && !lowerPost.contains("orhan")) return false
+                return true
+            }
+            return true
+        }
+
+        fun formatCleanEpisodeTitle(rawTitle: String, dramaTitle: String, episodeNumber: Int): String {
+            val withoutBoilerplate = rawTitle
+                .replace(Regex("""(?i)\bhow\s+to\s+watch\s+"""), "")
+                .replace(Regex("""(?i)\s*with\s+urdu\s+subtitles(?:\s+by\s+giveme5)?"""), "")
+                .replace(Regex("""(?i)\s*in\s+urdu\s+subtitles(?:\s+by\s+giveme5)?"""), "")
+                .replace(Regex("""(?i)\s*by\s+giveme5"""), "")
+                .trim()
+
+            // Check if there is a descriptive subtitle after ':' or '–' or '-'
+            val subtitleMatch = Regex("""(?i)(?:episode|ep)\s*0*\d+(?:\s*[–\-:]\s*season\s*\d+)?\s*[–\-:]\s*(.+)$""")
+                .find(withoutBoilerplate)
+            val extractedSubtitle = subtitleMatch?.groupValues?.getOrNull(1)
+                ?.replace(Regex("""(?i)^season\s*\d+\s*[–\-:]?\s*"""), "")
+                ?.trim()
+                .orEmpty()
+
+            return if (extractedSubtitle.length >= 4 && !extractedSubtitle.equals("season $episodeNumber", ignoreCase = true)) {
+                "Episode $episodeNumber: $extractedSubtitle"
+            } else {
+                "Episode $episodeNumber • $dramaTitle"
+            }
+        }
     }
 
     private suspend fun <T> executeWithRetry(
         maxAttempts: Int = 3,
-        initialDelayMs: Long = 600L,
+        initialDelayMs: Long = 500L,
         block: suspend () -> T
     ): T {
         var currentDelay = initialDelayMs
@@ -121,6 +343,21 @@ class WordPressContentRepository {
             ) {
                 return@withContext Pair(cachedCategories, cachedLatestEpisodes)
             }
+
+            // Warm in-memory cache from SQLite database if fresh and not force-refreshing
+            if (!forceRefresh && cachedCategories.isEmpty() && localCacheDb != null) {
+                if (localCacheDb.isCacheKeyFresh(LocalCatalogCacheDatabase.KEY_CATALOG_DRAMAS, CACHE_TTL_MS)) {
+                    val dbDramas = localCacheDb.getCachedDramas()
+                    val dbLatest = localCacheDb.getCachedLatestEpisodes()
+                    if (dbDramas.isNotEmpty() && dbLatest.isNotEmpty()) {
+                        cachedCategories = dbDramas
+                        cachedLatestEpisodes = dbLatest
+                        lastCacheTimestampMs = now
+                        registerSeasonLookupMaps(dbDramas)
+                        return@withContext Pair(dbDramas, dbLatest)
+                    }
+                }
+            }
         }
 
         val startTime = System.currentTimeMillis()
@@ -136,29 +373,44 @@ class WordPressContentRepository {
             val latestPostsResponse = executeWithRetry { api.getLatestPosts(perPage = 40, page = 1) }
             val latestPostsBody = latestPostsResponse.body()?.string() ?: "[]"
 
+            // Parse categories first so we know each category's canonical drama & season number
+            val initialDramas = parseCategoriesJson(categoriesBody, emptyMap(), emptyMap())
+            registerSeasonLookupMaps(initialDramas)
+
             val parsedLatestResult = parsePostsJson(
                 jsonString = latestPostsBody,
                 defaultCategoryId = 0,
-                defaultDramaName = "Turkish Historical Drama"
+                defaultDramaName = "Turkish Historical Drama",
+                forcedSeasonNumber = null
             )
             val latestEpisodes = parsedLatestResult.first
             duplicateCount += parsedLatestResult.second
 
-            // Map category ID -> latest poster from episodes in that category
+            // Map category ID -> latest poster & thumbnail from episodes in that category
             val categoryPosters = mutableMapOf<Int, String>()
+            val categoryThumbnails = mutableMapOf<Int, String>()
             for (ep in latestEpisodes) {
                 if (ep.categoryId > 0 && ep.posterUrl.isNotBlank() && !categoryPosters.containsKey(ep.categoryId)) {
                     categoryPosters[ep.categoryId] = ep.posterUrl
+                    categoryThumbnails[ep.categoryId] = ep.thumbnailUrl.ifBlank { ep.posterUrl }
                 }
             }
 
-            val parsedDramas = parseCategoriesJson(categoriesBody, categoryPosters)
-            val latency = System.currentTimeMillis() - startTime
+            val parsedDramas = parseCategoriesJson(categoriesBody, categoryPosters, categoryThumbnails)
+            registerSeasonLookupMaps(parsedDramas)
 
+            val latency = System.currentTimeMillis() - startTime
             val missingPosters = parsedDramas.count { it.hasMissingPoster } +
                 latestEpisodes.count { it.hasMissingPoster }
             val missingVideos = latestEpisodes.count { it.hasMissingVideo }
             val playableCount = latestEpisodes.count { it.isPlayable }
+
+            localCacheDb?.saveDramas(parsedDramas)
+            localCacheDb?.saveEpisodes(
+                episodes = latestEpisodes,
+                cacheKey = "latest_episodes_feed",
+                isLatestFeed = true
+            )
 
             cacheMutex.withLock {
                 cachedCategories = parsedDramas
@@ -169,7 +421,7 @@ class WordPressContentRepository {
                     isHealthy = categoriesResponse.isSuccessful && latestPostsResponse.isSuccessful,
                     httpStatusCode = statusCode,
                     responseLatencyMs = latency,
-                    totalCategoriesFetched = parsedDramas.size,
+                    totalCategoriesFetched = parsedDramas.sumOf { it.seasons.size },
                     totalEpisodesCached = latestEpisodes.size + cachedCategoryEpisodes.values.sumOf { it.size },
                     playableEpisodesCount = playableCount,
                     missingPosterCount = missingPosters,
@@ -184,8 +436,17 @@ class WordPressContentRepository {
         } catch (e: Exception) {
             errorMessage = e.localizedMessage ?: "Network error connecting to giveme5.co"
             val latency = System.currentTimeMillis() - startTime
-            Log.e(TAG, "Failed to fetch live WP content", e)
+            Log.e(TAG, "Failed to fetch live WP content; falling back to SQLite/memory cache", e)
+
+            val offlineDramas = cachedCategories.ifEmpty { localCacheDb?.getCachedDramas().orEmpty() }
+            val offlineLatest = cachedLatestEpisodes.ifEmpty { localCacheDb?.getCachedLatestEpisodes().orEmpty() }
+            if (offlineDramas.isNotEmpty()) {
+                registerSeasonLookupMaps(offlineDramas)
+            }
+
             cacheMutex.withLock {
+                cachedCategories = offlineDramas
+                cachedLatestEpisodes = offlineLatest
                 lastHealthReport = lastHealthReport.copy(
                     isHealthy = false,
                     httpStatusCode = if (statusCode == 200) 503 else statusCode,
@@ -193,7 +454,16 @@ class WordPressContentRepository {
                     lastCheckedTimestampMs = System.currentTimeMillis(),
                     errorMessage = errorMessage
                 )
-                Pair(cachedCategories, cachedLatestEpisodes)
+                Pair(offlineDramas, offlineLatest)
+            }
+        }
+    }
+
+    private fun registerSeasonLookupMaps(dramas: List<DramaSeries>) {
+        for (drama in dramas) {
+            for (season in drama.seasons) {
+                categoryToSeasonMap[season.categoryId] = season.seasonNumber
+                categoryToDramaTitleMap[season.categoryId] = drama.title
             }
         }
     }
@@ -202,47 +472,148 @@ class WordPressContentRepository {
         categoryId: Int,
         dramaTitle: String,
         page: Int = 1,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        expectedSeasonNumber: Int? = null
     ): List<EpisodeItem> = withContext(Dispatchers.IO) {
-        if (page == 1 && !forceRefresh) {
-            cachedCategoryEpisodes[categoryId]?.let { if (it.isNotEmpty()) return@withContext it }
-        }
-        try {
-            val response = executeWithRetry {
-                api.getPostsByCategory(categoryId = categoryId, perPage = 50, page = page, embed = 1)
-            }
-            val body = response.body()?.string() ?: "[]"
-            val parsed = parsePostsJson(
-                jsonString = body,
-                defaultCategoryId = categoryId,
-                defaultDramaName = dramaTitle
-            ).first.sortedBy { it.episodeNumber }
+        val lockKey = "${categoryId}_$page"
+        val mutex = categoryFetchLocks.getOrPut(lockKey) { Mutex() }
 
-            if (page == 1) {
-                cachedCategoryEpisodes[categoryId] = parsed
-                // Update category poster if we discovered one from its episodes
-                val discoveredPoster = parsed.firstOrNull { it.posterUrl.isNotBlank() }?.posterUrl
-                if (!discoveredPoster.isNullOrBlank()) {
-                    cacheMutex.withLock {
-                        cachedCategories = cachedCategories.map { drama ->
-                            if (drama.categoryId == categoryId && drama.posterUrl.isBlank()) {
-                                drama.copy(posterUrl = discoveredPoster, hasMissingPoster = false)
-                            } else {
-                                drama
-                            }
-                        }
+        mutex.withLock {
+            if (page == 1 && !forceRefresh) {
+                cachedCategoryEpisodes[categoryId]?.let {
+                    if (it.isNotEmpty()) return@withContext it
+                }
+                val cacheKey = "cat_episodes_$categoryId"
+                if (localCacheDb != null && localCacheDb.isCacheKeyFresh(cacheKey, CACHE_TTL_MS)) {
+                    val sqlCached = localCacheDb.getCachedEpisodesForCategory(categoryId)
+                    if (sqlCached.isNotEmpty()) {
+                        cachedCategoryEpisodes[categoryId] = sqlCached
+                        return@withContext sqlCached
                     }
                 }
-            } else {
-                val existing = cachedCategoryEpisodes[categoryId].orEmpty()
-                val merged = (existing + parsed).distinctBy { it.postId }.sortedBy { it.episodeNumber }
-                cachedCategoryEpisodes[categoryId] = merged
             }
-            parsed
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch episodes for category $categoryId page $page", e)
-            cachedCategoryEpisodes[categoryId].orEmpty()
+
+            val resolvedSeasonNum = expectedSeasonNumber ?: categoryToSeasonMap[categoryId]
+            val resolvedDramaName = categoryToDramaTitleMap[categoryId] ?: dramaTitle
+
+            try {
+                val response = executeWithRetry {
+                    api.getPostsByCategory(categoryId = categoryId, perPage = 50, page = page, embed = 1)
+                }
+                val body = response.body()?.string() ?: "[]"
+                val parsed = parsePostsJson(
+                    jsonString = body,
+                    defaultCategoryId = categoryId,
+                    defaultDramaName = resolvedDramaName,
+                    forcedSeasonNumber = resolvedSeasonNum
+                ).first
+                    .filter { doesPostBelongToDrama(it.title, resolvedDramaName) }
+                    .sortedWith(compareBy<EpisodeItem> { it.seasonNumber }.thenBy { it.episodeNumber })
+
+                if (page == 1) {
+                    val deduplicated = deduplicateSeasonEpisodes(parsed)
+                    cachedCategoryEpisodes[categoryId] = deduplicated
+                    localCacheDb?.saveEpisodes(
+                        episodes = deduplicated,
+                        cacheKey = "cat_episodes_$categoryId",
+                        isLatestFeed = false
+                    )
+                    val discoveredPoster = deduplicated.firstOrNull { it.posterUrl.isNotBlank() }?.posterUrl
+                    val discoveredThumb = deduplicated.firstOrNull { it.thumbnailUrl.isNotBlank() }?.thumbnailUrl
+                    if (!discoveredPoster.isNullOrBlank()) {
+                        cacheMutex.withLock {
+                            cachedCategories = cachedCategories.map { drama ->
+                                if (drama.allCategoryIds.contains(categoryId) && drama.posterUrl.isBlank()) {
+                                    drama.copy(
+                                        posterUrl = discoveredPoster,
+                                        thumbnailUrl = discoveredThumb ?: discoveredPoster,
+                                        hasMissingPoster = false
+                                    )
+                                } else {
+                                    drama
+                                }
+                            }
+                            localCacheDb?.saveDramas(cachedCategories)
+                        }
+                    }
+                    deduplicated
+                } else {
+                    val existing = cachedCategoryEpisodes[categoryId].orEmpty()
+                    val merged = deduplicateSeasonEpisodes(existing + parsed)
+                    cachedCategoryEpisodes[categoryId] = merged
+                    localCacheDb?.saveEpisodes(
+                        episodes = merged,
+                        cacheKey = "cat_episodes_$categoryId",
+                        isLatestFeed = false
+                    )
+                    parsed
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to fetch episodes for category $categoryId page $page; checking offline SQLite cache", e)
+                cachedCategoryEpisodes[categoryId]
+                    ?: localCacheDb?.getCachedEpisodesForCategory(categoryId).orEmpty()
+            }
         }
+    }
+
+    fun deduplicateSeasonEpisodes(episodes: List<EpisodeItem>): List<EpisodeItem> {
+        val bySeasonAndEp = LinkedHashMap<String, EpisodeItem>()
+        // Sort so playable and higher postId (newer corrected uploads) come first
+        val prioritized = episodes.sortedWith(
+            compareByDescending<EpisodeItem> { it.isPlayable }
+                .thenByDescending { it.postId }
+        )
+        for (ep in prioritized) {
+            val key = "${ep.seasonNumber}_${ep.episodeNumber}"
+            val existing = bySeasonAndEp[key]
+            if (existing == null) {
+                bySeasonAndEp[key] = ep
+            } else {
+                // Merge backup embed mirrors from duplicate post so no mirror is lost
+                val mergedBackups = buildList {
+                    addAll(existing.backupEmbedUrls)
+                    if (ep.primaryEmbedUrl.isNotBlank() && ep.primaryEmbedUrl != existing.primaryEmbedUrl) {
+                        add(ep.primaryEmbedUrl)
+                    }
+                    addAll(ep.backupEmbedUrls)
+                }.distinct()
+                bySeasonAndEp[key] = existing.copy(backupEmbedUrls = mergedBackups)
+            }
+        }
+        return bySeasonAndEp.values.sortedWith(
+            compareBy<EpisodeItem> { it.seasonNumber }.thenBy { it.episodeNumber }
+        )
+    }
+
+    fun clearInMemoryCache() {
+        cachedCategories = emptyList()
+        cachedCategoryEpisodes.clear()
+        cachedLatestEpisodes = emptyList()
+        lastCacheTimestampMs = 0L
+    }
+
+    fun getCacheStats(): CacheStats {
+        val ctx = appContext
+        val db = localCacheDb
+        return if (ctx != null && db != null) {
+            db.getCacheStats(ctx)
+        } else {
+            CacheStats(
+                cachedDramasCount = cachedCategories.size,
+                cachedSeasonsCount = cachedCategories.sumOf { it.seasons.size },
+                cachedEpisodesCount = cachedLatestEpisodes.size + cachedCategoryEpisodes.values.sumOf { it.size },
+                diskCacheBytes = 0L,
+                lastUpdatedMs = lastCacheTimestampMs
+            )
+        }
+    }
+
+    fun clearAllCaches() {
+        clearInMemoryCache()
+        appContext?.let { ctx ->
+            localCacheDb?.clearAllLocalCaches(ctx)
+        }
+        runCatching { okHttpClient.cache?.evictAll() }
     }
 
     suspend fun runApiHealthCheck(): ApiHealthReport = withContext(Dispatchers.IO) {
@@ -252,13 +623,23 @@ class WordPressContentRepository {
 
     fun getLatestHealthReport(): ApiHealthReport = lastHealthReport
 
-    private fun parseCategoriesJson(
+    fun parseCategoriesJson(
         jsonString: String,
-        categoryPosters: Map<Int, String>
+        categoryPosters: Map<Int, String>,
+        categoryThumbnails: Map<Int, String> = emptyMap()
     ): List<DramaSeries> {
-        val result = mutableListOf<DramaSeries>()
-        val seenNames = HashSet<String>()
         val array = JSONArray(jsonString)
+
+        data class RawCategoryEntry(
+            val id: Int,
+            val count: Int,
+            val rawName: String,
+            val slug: String,
+            val rawDesc: String,
+            val resolution: CanonicalDramaResolution
+        )
+
+        val entriesByDramaKey = LinkedHashMap<String, MutableList<RawCategoryEntry>>()
 
         for (i in 0 until array.length()) {
             val obj = array.optJSONObject(i) ?: continue
@@ -268,46 +649,94 @@ class WordPressContentRepository {
             val slug = obj.optString("slug", "")
             val rawDesc = decodeHtml(obj.optString("description", "")).trim()
 
-            if (id <= 0 || rawName.isBlank() || slug == "uncategorized" || count <= 0) continue
-            val normalizedKey = rawName.lowercase()
-            if (!seenNames.add(normalizedKey)) continue
+            // Skip invalid, empty, or WordPress default catch-all category ID=1
+            if (id <= 1 || count <= 0 || rawName.isBlank()) continue
+            val resolution = resolveCanonicalDrama(rawName, slug) ?: continue
 
-            val seasonMatch = SEASON_NUM_REGEX.find(rawName)
-            val seasonNum = seasonMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
-            val posterUrl = categoryPosters[id] ?: ""
-
-            val genres = inferGenres(rawName)
-            val description = rawDesc.ifBlank {
-                "Watch $rawName in high-definition with authentic Urdu subtitles and dubbing on Dastan TV. Featuring $count episodes of epic Turkish historical drama, loyalty, and empire."
-            }
-
-            result.add(
-                DramaSeries(
-                    id = "drama_$id",
-                    categoryId = id,
-                    title = rawName,
-                    originalTitle = rawName.replace(Regex("Season\\s*\\d+", RegexOption.IGNORE_CASE), "").trim(),
+            entriesByDramaKey.getOrPut(resolution.dramaKey) { mutableListOf() }.add(
+                RawCategoryEntry(
+                    id = id,
+                    count = count,
+                    rawName = rawName,
                     slug = slug,
-                    description = description,
-                    posterUrl = posterUrl,
-                    episodeCount = count,
-                    seasonNumber = seasonNum,
-                    genreTags = genres,
-                    isFeatured = i < 5,
-                    isHidden = false,
-                    isVipOnly = false,
-                    priorityOrder = i,
-                    hasMissingPoster = posterUrl.isBlank()
+                    rawDesc = rawDesc,
+                    resolution = resolution
                 )
             )
         }
-        return result.sortedByDescending { it.episodeCount }
+
+        val unifiedDramas = mutableListOf<DramaSeries>()
+        var index = 0
+
+        for ((dramaKey, entries) in entriesByDramaKey) {
+            // Deduplicate seasons by seasonNumber (keep category with highest episode count if duplicate category exists)
+            val seasons = entries
+                .groupBy { it.resolution.seasonNumber }
+                .map { (seasonNum, seasonEntries) ->
+                    val best = seasonEntries.maxByOrNull { it.count } ?: seasonEntries.first()
+                    DramaSeason(
+                        seasonNumber = seasonNum,
+                        categoryId = best.id,
+                        categoryName = best.rawName,
+                        slug = best.slug,
+                        episodeCount = seasonEntries.maxOf { it.count },
+                        hasExplicitSeasonMetadata = best.resolution.hasExplicitSeason || entries.size > 1
+                    )
+                }
+                .sortedBy { it.seasonNumber }
+
+            val primarySeason = seasons.first()
+            val canonicalTitle = entries.first().resolution.canonicalTitle
+            val totalEpisodes = seasons.sumOf { it.episodeCount }
+
+            val discoveredPoster = seasons.firstNotNullOfOrNull { s ->
+                categoryPosters[s.categoryId]?.takeIf { it.isNotBlank() }
+            } ?: ""
+            val discoveredThumb = seasons.firstNotNullOfOrNull { s ->
+                categoryThumbnails[s.categoryId]?.takeIf { it.isNotBlank() }
+            } ?: discoveredPoster
+
+            val genres = inferGenres(canonicalTitle)
+            val customDesc = entries.firstNotNullOfOrNull { it.rawDesc.takeIf { d -> d.isNotBlank() } }
+            val seasonsSummary = if (seasons.size > 1) {
+                "Seasons ${seasons.joinToString(", ") { it.seasonNumber.toString() }} ($totalEpisodes total episodes)"
+            } else {
+                "$totalEpisodes episodes"
+            }
+            val description = customDesc ?: "Stream $canonicalTitle in HD with authentic Urdu subtitles and dubbing on Dastan TV. Available: $seasonsSummary."
+
+            unifiedDramas.add(
+                DramaSeries(
+                    id = "drama_${primarySeason.categoryId}",
+                    categoryId = primarySeason.categoryId,
+                    title = canonicalTitle,
+                    originalTitle = canonicalTitle,
+                    slug = dramaKey,
+                    description = description,
+                    posterUrl = discoveredPoster,
+                    thumbnailUrl = discoveredThumb,
+                    episodeCount = totalEpisodes,
+                    seasonNumber = primarySeason.seasonNumber,
+                    genreTags = genres,
+                    isFeatured = index < 5,
+                    isHidden = false,
+                    isVipOnly = false,
+                    priorityOrder = index,
+                    hasMissingPoster = discoveredPoster.isBlank(),
+                    seasons = seasons
+                )
+            )
+            index++
+        }
+
+        return unifiedDramas.sortedByDescending { it.episodeCount }
     }
 
-    private fun parsePostsJson(
+    fun parsePostsJson(
         jsonString: String,
         defaultCategoryId: Int,
-        defaultDramaName: String
+        defaultDramaName: String,
+        forcedSeasonNumber: Int? = null
     ): Pair<List<EpisodeItem>, Int> {
         val list = mutableListOf<EpisodeItem>()
         val seenPostIds = HashSet<Int>()
@@ -340,18 +769,26 @@ class WordPressContentRepository {
                     .replace(Regex("<[^>]+>"), " ")
             ).replace(Regex("\\s+"), " ").trim().take(700)
 
-            // Extract categories array
+            // Extract categories array (prefer non-1 category IDs)
             val catsArray = obj.optJSONArray("categories")
             val resolvedCategoryId = if (defaultCategoryId > 0) {
                 defaultCategoryId
             } else if (catsArray != null && catsArray.length() > 0) {
-                catsArray.optInt(0, 0)
+                var chosenCat = catsArray.optInt(0, 0)
+                for (cIdx in 0 until catsArray.length()) {
+                    val candidate = catsArray.optInt(cIdx, 0)
+                    if (candidate > 1) {
+                        chosenCat = candidate
+                        break
+                    }
+                }
+                chosenCat
             } else {
                 0
             }
 
-            // Extract featured image from _embedded["wp:featuredmedia"] or fallback <img>
-            val posterUrl = extractPosterUrl(obj, rawHtmlContent)
+            // Extract optimized poster and lightweight thumbnail URLs
+            val (posterUrl, thumbnailUrl) = extractPosterAndThumbnailUrls(obj, rawHtmlContent)
 
             // Extract all authorized video iframe embed URLs (Vidmoly, OK.ru, etc.)
             val embedUrls = extractAuthorizedEmbedUrls(rawHtmlContent)
@@ -360,10 +797,17 @@ class WordPressContentRepository {
 
             val epNum = EPISODE_NUM_REGEX.find(renderedTitle)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: (i + 1)
-            val seasonNum = SEASON_NUM_REGEX.find(renderedTitle)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                ?: 1
 
-            val inferredDramaTitle = inferDramaTitleFromEpisode(renderedTitle, defaultDramaName)
+            val titleSeasonMatch = SEASON_NUM_REGEX.find(renderedTitle)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val mappedCategorySeason = categoryToSeasonMap[resolvedCategoryId]
+            val seasonNum = forcedSeasonNumber ?: titleSeasonMatch ?: mappedCategorySeason ?: 1
+            val hasExplicitSeason = forcedSeasonNumber != null || titleSeasonMatch != null || mappedCategorySeason != null
+
+            val mappedDramaTitle = categoryToDramaTitleMap[resolvedCategoryId]
+            val inferredDramaTitle = mappedDramaTitle ?: inferDramaTitleFromEpisode(renderedTitle, defaultDramaName)
+
+            val cleanTitle = formatCleanEpisodeTitle(renderedTitle, inferredDramaTitle, epNum)
+            val durationLabel = DURATION_REGEX.find(plainDescription)?.groupValues?.getOrNull(1)?.trim().orEmpty()
 
             list.add(
                 EpisodeItem(
@@ -372,13 +816,16 @@ class WordPressContentRepository {
                     categoryId = resolvedCategoryId,
                     dramaTitle = inferredDramaTitle,
                     title = renderedTitle,
+                    cleanTitle = cleanTitle,
                     episodeNumber = epNum,
                     seasonNumber = seasonNum,
                     description = plainDescription.ifBlank {
-                        "Stream $renderedTitle in HD on Dastan TV."
+                        "Stream $cleanTitle in HD on Dastan TV."
                     },
                     publishedDate = dateStr,
                     posterUrl = posterUrl,
+                    thumbnailUrl = thumbnailUrl.ifBlank { posterUrl },
+                    durationLabel = durationLabel,
                     primaryEmbedUrl = primaryEmbed,
                     backupEmbedUrls = backupEmbeds,
                     sourcePostUrl = link,
@@ -386,24 +833,36 @@ class WordPressContentRepository {
                     isHidden = false,
                     isVipOnly = false,
                     hasMissingPoster = posterUrl.isBlank(),
-                    hasMissingVideo = primaryEmbed.isBlank()
+                    hasMissingVideo = primaryEmbed.isBlank(),
+                    hasExplicitSeason = hasExplicitSeason
                 )
             )
         }
         return Pair(list, duplicatesSkipped)
     }
 
-    private fun extractPosterUrl(postObj: JSONObject, rawHtml: String): String {
+    private fun extractPosterAndThumbnailUrls(postObj: JSONObject, rawHtml: String): Pair<String, String> {
         val embedded = postObj.optJSONObject("_embedded")
         val mediaArray = embedded?.optJSONArray("wp:featuredmedia")
         if (mediaArray != null && mediaArray.length() > 0) {
             val mediaObj = mediaArray.optJSONObject(0)
-            val directUrl = mediaObj?.optString("source_url", "")?.trim().orEmpty()
-            if (directUrl.startsWith("http")) return directUrl
+            val sizesObj = mediaObj?.optJSONObject("media_details")?.optJSONObject("sizes")
+
+            // Prefer medium (711x400) for thumbnails and medium_large (768x432) for posters instead of huge full images
+            val mediumUrl = sizesObj?.optJSONObject("medium")?.optString("source_url", "")?.trim().orEmpty()
+            val mediumLargeUrl = sizesObj?.optJSONObject("medium_large")?.optString("source_url", "")?.trim().orEmpty()
+            val thumbUrl = sizesObj?.optJSONObject("thumbnail")?.optString("source_url", "")?.trim().orEmpty()
+            val fullUrl = mediaObj?.optString("source_url", "")?.trim().orEmpty()
+
+            val bestPoster = listOf(mediumLargeUrl, mediumUrl, fullUrl).firstOrNull { it.startsWith("http") }.orEmpty()
+            val bestThumb = listOf(mediumUrl, thumbUrl, bestPoster).firstOrNull { it.startsWith("http") }.orEmpty()
+            if (bestPoster.isNotBlank()) {
+                return Pair(bestPoster, bestThumb.ifBlank { bestPoster })
+            }
         }
         val imgMatch = IMG_SRC_REGEX.find(rawHtml)?.groupValues?.getOrNull(1)?.trim().orEmpty()
-        if (imgMatch.startsWith("http")) return imgMatch
-        return ""
+        if (imgMatch.startsWith("http")) return Pair(imgMatch, imgMatch)
+        return Pair("", "")
     }
 
     private fun extractAuthorizedEmbedUrls(rawHtml: String): List<String> {
@@ -413,7 +872,6 @@ class WordPressContentRepository {
             if (src.startsWith("//")) {
                 src = "https:$src"
             }
-            // Filter out ad iframes and keep video player embeds
             val lower = src.lowercase()
             val isAd = lower.contains("bicea.org") ||
                 lower.contains("doubleclick") ||
@@ -423,7 +881,6 @@ class WordPressContentRepository {
                 urls.add(src)
             }
         }
-        // Sort so Vidmoly or OK.ru comes first
         return urls.distinct().sortedBy { url ->
             when {
                 url.contains("vidmoly", ignoreCase = true) -> 0
@@ -435,18 +892,22 @@ class WordPressContentRepository {
 
     private fun inferDramaTitleFromEpisode(episodeTitle: String, fallback: String): String {
         val beforeEp = episodeTitle
+            .replace(Regex("""(?i)^how\s+to\s+watch\s+"""), "")
             .substringBefore("Episode", missingDelimiterValue = "")
             .substringBefore("episode", missingDelimiterValue = "")
+            .substringBefore("EPISODE", missingDelimiterValue = "")
+            .replace(Regex("""(?i)\bseason\s*\d+\b"""), "")
             .replace(Regex("[-–:]\\s*$"), "")
             .trim()
-        return if (beforeEp.length >= 4) beforeEp else fallback
+        val resolution = resolveCanonicalDrama(beforeEp, "")
+        return resolution?.canonicalTitle ?: if (beforeEp.length >= 4) beforeEp else fallback
     }
 
     private fun inferGenres(dramaName: String): List<String> {
         val lower = dramaName.lowercase()
         val tags = mutableListOf("Historical", "Urdu Sub/Dub")
         when {
-            lower.contains("sultan") || lower.contains("osman") || lower.contains("ertugrul") || lower.contains("mehmed") || lower.contains("fateh") ->
+            lower.contains("sultan") || lower.contains("osman") || lower.contains("ertugrul") || lower.contains("mehmed") || lower.contains("fateh") || lower.contains("orhan") ->
                 tags.add("Ottoman Empire")
             lower.contains("barbaros") ->
                 tags.add("Naval Action")
@@ -483,17 +944,21 @@ class WordPressContentRepository {
             .associateBy { it.targetId }
 
         return dramas.map { drama ->
-            val ov = dramaOverrides[drama.categoryId.toString()] ?: dramaOverrides[drama.id]
+            val ov = dramaOverrides[drama.categoryId.toString()]
+                ?: dramaOverrides[drama.id]
+                ?: drama.seasons.firstNotNullOfOrNull { dramaOverrides[it.categoryId.toString()] }
             if (ov != null) {
+                val resolvedPoster = ov.customPosterUrl.ifBlank { drama.posterUrl }
                 drama.copy(
                     title = ov.customTitle.ifBlank { drama.title },
                     description = ov.customDescription.ifBlank { drama.description },
-                    posterUrl = ov.customPosterUrl.ifBlank { drama.posterUrl },
+                    posterUrl = resolvedPoster,
+                    thumbnailUrl = ov.customPosterUrl.ifBlank { drama.thumbnailUrl.ifBlank { resolvedPoster } },
                     isHidden = ov.isHidden,
                     isFeatured = ov.isFeatured,
                     isVipOnly = ov.isVipOnly,
                     priorityOrder = ov.priorityOrder.toInt(),
-                    hasMissingPoster = ov.customPosterUrl.isBlank() && drama.posterUrl.isBlank()
+                    hasMissingPoster = resolvedPoster.isBlank()
                 )
             } else {
                 drama
@@ -506,7 +971,7 @@ class WordPressContentRepository {
             )
     }
 
-    // Merge Admin Firestore Overrides with Live WordPress Episodes
+    // Merge Admin Firestore Overrides with Live WordPress Episodes (Supports Admin Season + Episode Correction)
     fun applyAdminOverridesToEpisodes(
         episodes: List<EpisodeItem>,
         overrides: List<CatalogOverride>,
@@ -519,10 +984,21 @@ class WordPressContentRepository {
         return episodes.map { ep ->
             val ov = epOverrides[ep.postId.toString()] ?: epOverrides[ep.id]
             if (ov != null) {
+                val pOrder = ov.priorityOrder.toInt()
+                // Admin correction encoding: priorityOrder = seasonNumber * 1000 + episodeNumber
+                val correctedSeason = if (pOrder >= 1000) (pOrder / 1000).coerceAtLeast(1) else ep.seasonNumber
+                val correctedEpisode = if (pOrder >= 1000) (pOrder % 1000).coerceAtLeast(1)
+                else if (pOrder in 1..999) pOrder else ep.episodeNumber
+                val updatedTitle = ov.customTitle.ifBlank { ep.title }
+
                 ep.copy(
-                    title = ov.customTitle.ifBlank { ep.title },
+                    title = updatedTitle,
+                    cleanTitle = if (ov.customTitle.isNotBlank()) ov.customTitle else formatCleanEpisodeTitle(updatedTitle, ep.dramaTitle, correctedEpisode),
                     description = ov.customDescription.ifBlank { ep.description },
                     posterUrl = ov.customPosterUrl.ifBlank { ep.posterUrl },
+                    thumbnailUrl = ov.customPosterUrl.ifBlank { ep.thumbnailUrl },
+                    seasonNumber = correctedSeason,
+                    episodeNumber = correctedEpisode,
                     isHidden = ov.isHidden,
                     isVipOnly = ov.isVipOnly
                 )
@@ -530,5 +1006,6 @@ class WordPressContentRepository {
                 ep
             }
         }.filter { includeHiddenForAdmin || !it.isHidden }
+            .sortedWith(compareBy<EpisodeItem> { it.seasonNumber }.thenBy { it.episodeNumber })
     }
 }
