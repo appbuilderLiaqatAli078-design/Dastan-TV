@@ -11,12 +11,14 @@ import com.example.data.model.ApiHealthReport
 import com.example.data.model.AppConfig
 import com.example.data.model.CacheStats
 import com.example.data.model.CatalogOverride
+import com.example.data.model.ContentSource
 import com.example.data.model.DramaSeries
 import com.example.data.model.EpisodeItem
 import com.example.data.model.FavoriteItem
 import com.example.data.model.SavedEpisodeItem
 import com.example.data.model.UserProfile
 import com.example.data.model.WatchHistoryItem
+import com.example.data.remote.DramaNitamContentRepository
 import com.example.data.remote.WordPressContentRepository
 import com.example.data.repository.DastanRepository
 import com.google.firebase.Firebase
@@ -36,13 +38,32 @@ import kotlinx.coroutines.launch
 class DastanViewModel(
     private val repository: DastanRepository,
     private val contentRepository: WordPressContentRepository,
+    private val dramaNitamRepository: DramaNitamContentRepository,
     val currentUserId: String
 ) : ViewModel() {
 
+    // Source 1: "Drama Collection" (giveme5.co)
     private val _rawDramas = MutableStateFlow<List<DramaSeries>>(emptyList())
     private val _rawLatestEpisodes = MutableStateFlow<List<EpisodeItem>>(emptyList())
-    private val _categoryEpisodesMap = MutableStateFlow<Map<Int, List<EpisodeItem>>>(emptyMap())
-    private val _categoryPageMap = MutableStateFlow<Map<Int, Int>>(emptyMap())
+
+    // Source 2: "Hindi & Urdu Dubbed" (dramanitam.com) — strictly isolated from Source 1
+    private val _hindiUrduDramas = MutableStateFlow<List<DramaSeries>>(emptyList())
+    val hindiUrduDramas: StateFlow<List<DramaSeries>> = _hindiUrduDramas.asStateFlow()
+
+    private val _hindiUrduLatestEpisodes = MutableStateFlow<List<EpisodeItem>>(emptyList())
+    val hindiUrduLatestEpisodes: StateFlow<List<EpisodeItem>> = _hindiUrduLatestEpisodes.asStateFlow()
+
+    private val _hindiUrduCategories = MutableStateFlow<List<String>>(emptyList())
+    val hindiUrduCategories: StateFlow<List<String>> = _hindiUrduCategories.asStateFlow()
+
+    private val _isLoadingHindiUrdu = MutableStateFlow(true)
+    val isLoadingHindiUrdu: StateFlow<Boolean> = _isLoadingHindiUrdu.asStateFlow()
+
+    // Scoped episode map keyed by "${source.sourceId}_cat_${categoryId}" to prevent cross-source collisions
+    private val _scopedEpisodesMap = MutableStateFlow<Map<String, List<EpisodeItem>>>(emptyMap())
+    val scopedEpisodesMap: StateFlow<Map<String, List<EpisodeItem>>> = _scopedEpisodesMap.asStateFlow()
+
+    private val _scopedPageMap = MutableStateFlow<Map<String, Int>>(emptyMap())
 
     private val _isLoadingContent = MutableStateFlow(true)
     val isLoadingContent: StateFlow<Boolean> = _isLoadingContent.asStateFlow()
@@ -61,9 +82,6 @@ class DastanViewModel(
 
     private val _flagSecureEnabled = MutableStateFlow(false)
     val flagSecureEnabled: StateFlow<Boolean> = _flagSecureEnabled.asStateFlow()
-
-    // Exposes categoryEpisodesMap as a StateFlow so Compose UI recomposes immediately when seasons load
-    val categoryEpisodesMap: StateFlow<Map<Int, List<EpisodeItem>>> = _categoryEpisodesMap.asStateFlow()
 
     val userProfile: StateFlow<UserProfile?> = repository.observeUserProfile(currentUserId)
         .catch { error ->
@@ -149,7 +167,7 @@ class DastanViewModel(
             initialValue = AppConfig()
         )
 
-    // Visible Dramas for User UI (filters out hidden dramas)
+    // Visible Dramas for "Drama Collection" (Source 1: giveme5.co)
     val userDramas: StateFlow<List<DramaSeries>> = combine(
         _rawDramas,
         catalogOverrides
@@ -232,12 +250,20 @@ class DastanViewModel(
     private fun startAutomaticCatalogDeltaSync() {
         viewModelScope.launch {
             while (true) {
-                kotlinx.coroutines.delay(10 * 60 * 1000L) // Poll every 10 minutes for newly published dramas/seasons/episodes
+                kotlinx.coroutines.delay(10 * 60 * 1000L) // Poll every 10 minutes
                 runCatching {
                     val delta = contentRepository.syncLatestCatalogDelta()
                     val (dramas, latestEps) = contentRepository.fetchDramasAndLatestEpisodes(forceRefresh = false)
                     _rawDramas.value = dramas
                     _rawLatestEpisodes.value = latestEps
+
+                    val (dubbedDramas, dubbedEps, dubbedCats) = dramaNitamRepository.fetchDubbedCatalog(forceRefresh = true)
+                    if (dubbedDramas.isNotEmpty()) {
+                        _hindiUrduDramas.value = dubbedDramas
+                        _hindiUrduLatestEpisodes.value = dubbedEps
+                        _hindiUrduCategories.value = dubbedCats
+                    }
+
                     _apiHealth.value = contentRepository.getLatestHealthReport()
                     _cacheStats.value = contentRepository.getCacheStats()
                     if (delta.newDramasCount > 0 || delta.newSeasonsCount > 0 || delta.newEpisodesCount > 0) {
@@ -268,6 +294,7 @@ class DastanViewModel(
     }
 
     fun refreshContent(forceRefresh: Boolean = true) {
+        // Launch Source 1 ("Drama Collection" - giveme5.co)
         viewModelScope.launch {
             _isLoadingContent.value = true
             if (forceRefresh) {
@@ -287,7 +314,7 @@ class DastanViewModel(
                 _statusMessage.value = if (deltaDetails.isNotEmpty()) {
                     "Synced ${dramas.size} dramas (${deltaDetails.joinToString(", ")})"
                 } else {
-                    "Catalog up to date: ${dramas.size} dramas & ${latestEps.size} recent episodes."
+                    "Catalog up to date: ${dramas.size} Drama Collection & ${_hindiUrduDramas.value.size} Dubbed series."
                 }
             } else {
                 val (dramas, latestEps) = contentRepository.fetchDramasAndLatestEpisodes(forceRefresh = false)
@@ -297,6 +324,17 @@ class DastanViewModel(
                 _cacheStats.value = contentRepository.getCacheStats()
                 _isLoadingContent.value = false
             }
+        }
+
+        // Launch Source 2 ("Hindi & Urdu Dubbed" - dramanitam.com) independently
+        viewModelScope.launch {
+            _isLoadingHindiUrdu.value = true
+            val (dubbedDramas, dubbedEps, dubbedCats) = dramaNitamRepository.fetchDubbedCatalog(forceRefresh = forceRefresh)
+            _hindiUrduDramas.value = dubbedDramas
+            _hindiUrduLatestEpisodes.value = dubbedEps
+            _hindiUrduCategories.value = dubbedCats
+            _cacheStats.value = contentRepository.getCacheStats()
+            _isLoadingHindiUrdu.value = false
         }
     }
 
@@ -308,58 +346,90 @@ class DastanViewModel(
         viewModelScope.launch {
             _isLoadingEpisodes.value = true
             val targetCategoryId = drama.categoryIdForSeason(seasonNumber)
-            val expectedCount = drama.seasons.firstOrNull { it.seasonNumber == seasonNumber }?.episodeCount
-                ?: drama.episodeCount
-            val epsPage1 = contentRepository.fetchEpisodesForCategory(
-                categoryId = targetCategoryId,
-                dramaTitle = drama.title,
-                expectedSeasonNumber = seasonNumber,
-                page = 1,
-                forceRefresh = forceRefresh
-            )
-            var combinedSeasonEps = epsPage1
-            var highestPageLoaded = 1
+            val scopedKey = drama.scopedCategoryKeyForSeason(seasonNumber)
 
-            // If this season has > 45 episodes, automatically fetch page 2 so Episode 1..N are all present
-            if (epsPage1.size >= 45 || expectedCount > epsPage1.size) {
-                val epsPage2 = contentRepository.fetchEpisodesForCategory(
-                    categoryId = targetCategoryId,
-                    dramaTitle = drama.title,
-                    expectedSeasonNumber = seasonNumber,
-                    page = 2,
-                    forceRefresh = forceRefresh
-                )
-                if (epsPage2.isNotEmpty()) {
-                    combinedSeasonEps = contentRepository.deduplicateSeasonEpisodes(epsPage1 + epsPage2)
-                    highestPageLoaded = 2
-                }
-            }
-
-            _categoryEpisodesMap.value = _categoryEpisodesMap.value + (targetCategoryId to combinedSeasonEps)
-            _categoryPageMap.value = _categoryPageMap.value + (targetCategoryId to highestPageLoaded)
-
-            // Also warm cache for remaining seasons of this drama in the background if not yet loaded
-            drama.seasons.forEach { season ->
-                if (season.categoryId != targetCategoryId && !_categoryEpisodesMap.value.containsKey(season.categoryId)) {
-                    val otherSeasonEps = contentRepository.fetchEpisodesForCategory(
-                        categoryId = season.categoryId,
+            when (drama.source) {
+                ContentSource.DRAMANITAM_DUBBED -> {
+                    val dubbedEps = dramaNitamRepository.fetchEpisodesForSeasonPost(
+                        seasonPostId = targetCategoryId,
                         dramaTitle = drama.title,
-                        expectedSeasonNumber = season.seasonNumber,
-                        page = 1,
-                        forceRefresh = false
+                        expectedSeasonNumber = seasonNumber,
+                        forceRefresh = forceRefresh
                     )
-                    if (otherSeasonEps.isNotEmpty()) {
-                        _categoryEpisodesMap.value = _categoryEpisodesMap.value + (season.categoryId to otherSeasonEps)
-                        _categoryPageMap.value = _categoryPageMap.value + (season.categoryId to 1)
+                    _scopedEpisodesMap.value = _scopedEpisodesMap.value + (scopedKey to dubbedEps)
+                    _scopedPageMap.value = _scopedPageMap.value + (scopedKey to 1)
+
+                    drama.seasons.forEach { season ->
+                        val otherKey = season.scopedCategoryKey
+                        if (otherKey != scopedKey && !_scopedEpisodesMap.value.containsKey(otherKey)) {
+                            val otherSeasonEps = dramaNitamRepository.fetchEpisodesForSeasonPost(
+                                seasonPostId = season.categoryId,
+                                dramaTitle = drama.title,
+                                expectedSeasonNumber = season.seasonNumber,
+                                forceRefresh = false
+                            )
+                            if (otherSeasonEps.isNotEmpty()) {
+                                _scopedEpisodesMap.value = _scopedEpisodesMap.value + (otherKey to otherSeasonEps)
+                                _scopedPageMap.value = _scopedPageMap.value + (otherKey to 1)
+                            }
+                        }
+                    }
+                }
+
+                ContentSource.DRAMA_COLLECTION -> {
+                    val expectedCount = drama.seasons.firstOrNull { it.seasonNumber == seasonNumber }?.episodeCount
+                        ?: drama.episodeCount
+                    val epsPage1 = contentRepository.fetchEpisodesForCategory(
+                        categoryId = targetCategoryId,
+                        dramaTitle = drama.title,
+                        expectedSeasonNumber = seasonNumber,
+                        page = 1,
+                        forceRefresh = forceRefresh
+                    )
+                    var combinedSeasonEps = epsPage1
+                    var highestPageLoaded = 1
+
+                    if (epsPage1.size >= 45 || expectedCount > epsPage1.size) {
+                        val epsPage2 = contentRepository.fetchEpisodesForCategory(
+                            categoryId = targetCategoryId,
+                            dramaTitle = drama.title,
+                            expectedSeasonNumber = seasonNumber,
+                            page = 2,
+                            forceRefresh = forceRefresh
+                        )
+                        if (epsPage2.isNotEmpty()) {
+                            combinedSeasonEps = contentRepository.deduplicateSeasonEpisodes(epsPage1 + epsPage2)
+                            highestPageLoaded = 2
+                        }
+                    }
+
+                    _scopedEpisodesMap.value = _scopedEpisodesMap.value + (scopedKey to combinedSeasonEps)
+                    _scopedPageMap.value = _scopedPageMap.value + (scopedKey to highestPageLoaded)
+
+                    drama.seasons.forEach { season ->
+                        val otherKey = "${drama.source.sourceId}_cat_${season.categoryId}"
+                        if (otherKey != scopedKey && !_scopedEpisodesMap.value.containsKey(otherKey)) {
+                            val otherSeasonEps = contentRepository.fetchEpisodesForCategory(
+                                categoryId = season.categoryId,
+                                dramaTitle = drama.title,
+                                expectedSeasonNumber = season.seasonNumber,
+                                page = 1,
+                                forceRefresh = false
+                            )
+                            if (otherSeasonEps.isNotEmpty()) {
+                                _scopedEpisodesMap.value = _scopedEpisodesMap.value + (otherKey to otherSeasonEps)
+                                _scopedPageMap.value = _scopedPageMap.value + (otherKey to 1)
+                            }
+                        }
+                    }
+
+                    val (updatedDramas, _) = contentRepository.fetchDramasAndLatestEpisodes(forceRefresh = false)
+                    if (updatedDramas.isNotEmpty()) {
+                        _rawDramas.value = updatedDramas
                     }
                 }
             }
 
-            // Refresh drama posters if newly discovered
-            val (updatedDramas, _) = contentRepository.fetchDramasAndLatestEpisodes(forceRefresh = false)
-            if (updatedDramas.isNotEmpty()) {
-                _rawDramas.value = updatedDramas
-            }
             _cacheStats.value = contentRepository.getCacheStats()
             _isLoadingEpisodes.value = false
         }
@@ -370,7 +440,24 @@ class DastanViewModel(
             if (_isLoadingEpisodes.value) return@launch
             _isLoadingEpisodes.value = true
             val targetCategoryId = drama.categoryIdForSeason(seasonNumber)
-            val nextPage = (_categoryPageMap.value[targetCategoryId] ?: 1) + 1
+            val scopedKey = drama.scopedCategoryKeyForSeason(seasonNumber)
+
+            if (drama.source == ContentSource.DRAMANITAM_DUBBED) {
+                val refreshed = dramaNitamRepository.fetchEpisodesForSeasonPost(
+                    seasonPostId = targetCategoryId,
+                    dramaTitle = drama.title,
+                    expectedSeasonNumber = seasonNumber,
+                    forceRefresh = true
+                )
+                if (refreshed.isNotEmpty()) {
+                    _scopedEpisodesMap.value = _scopedEpisodesMap.value + (scopedKey to refreshed)
+                }
+                _statusMessage.value = "All available episodes loaded for ${drama.title} Season $seasonNumber"
+                _isLoadingEpisodes.value = false
+                return@launch
+            }
+
+            val nextPage = (_scopedPageMap.value[scopedKey] ?: 1) + 1
             val newPageEps = contentRepository.fetchEpisodesForCategory(
                 categoryId = targetCategoryId,
                 dramaTitle = drama.title,
@@ -379,12 +466,12 @@ class DastanViewModel(
                 forceRefresh = true
             )
             if (newPageEps.isNotEmpty()) {
-                val existing = _categoryEpisodesMap.value[targetCategoryId].orEmpty()
+                val existing = _scopedEpisodesMap.value[scopedKey].orEmpty()
                 val merged = (existing + newPageEps)
                     .distinctBy { it.episodeNumber }
                     .sortedBy { it.episodeNumber }
-                _categoryEpisodesMap.value = _categoryEpisodesMap.value + (targetCategoryId to merged)
-                _categoryPageMap.value = _categoryPageMap.value + (targetCategoryId to nextPage)
+                _scopedEpisodesMap.value = _scopedEpisodesMap.value + (scopedKey to merged)
+                _scopedPageMap.value = _scopedPageMap.value + (scopedKey to nextPage)
                 _cacheStats.value = contentRepository.getCacheStats()
                 _statusMessage.value = "Loaded Season $seasonNumber page $nextPage (${newPageEps.size} episodes)"
             } else {
@@ -400,16 +487,29 @@ class DastanViewModel(
         includeHidden: Boolean = false
     ): List<EpisodeItem> {
         val targetCategoryId = drama.categoryIdForSeason(seasonNumber)
-        val allDramaCategoryIds = drama.allCategoryIds.toSet()
+        val targetScopedKey = drama.scopedCategoryKeyForSeason(seasonNumber)
 
-        // Gather episodes from this season's category, plus any episodes in sibling categories
-        // whose seasonNumber was explicitly set or corrected by Admin to this seasonNumber
-        val fromTargetCategory = _categoryEpisodesMap.value[targetCategoryId]
-            ?: _rawLatestEpisodes.value.filter { it.categoryId == targetCategoryId }
+        if (drama.source == ContentSource.DRAMANITAM_DUBBED) {
+            val fromScoped = _scopedEpisodesMap.value[targetScopedKey]
+                ?: _hindiUrduLatestEpisodes.value.filter {
+                    it.source == ContentSource.DRAMANITAM_DUBBED && it.categoryId == targetCategoryId
+                }
+            return fromScoped
+                .filter { it.source == ContentSource.DRAMANITAM_DUBBED }
+                .distinctBy { it.episodeNumber }
+                .sortedBy { it.episodeNumber }
+        }
 
-        val fromAllCategories = allDramaCategoryIds.flatMap { catId ->
-            _categoryEpisodesMap.value[catId].orEmpty()
+        val allDramaScopedKeys = drama.allCategoryIds.map { "${drama.source.sourceId}_cat_$it" }.toSet()
+        val fromTargetCategory = _scopedEpisodesMap.value[targetScopedKey]
+            ?: _rawLatestEpisodes.value.filter {
+                it.source == ContentSource.DRAMA_COLLECTION && it.categoryId == targetCategoryId
+            }
+
+        val fromAllCategories = allDramaScopedKeys.flatMap { key ->
+            _scopedEpisodesMap.value[key].orEmpty()
         }.ifEmpty { fromTargetCategory }
+            .filter { it.source == ContentSource.DRAMA_COLLECTION }
 
         val overriddenAll = contentRepository.applyAdminOverridesToEpisodes(
             episodes = fromAllCategories,
@@ -430,14 +530,33 @@ class DastanViewModel(
             .sortedBy { it.episodeNumber }
     }
 
-    fun getEpisodesForCategory(categoryId: Int, includeHidden: Boolean = false): List<EpisodeItem> {
-        val raw = _categoryEpisodesMap.value[categoryId]
-            ?: _rawLatestEpisodes.value.filter { it.categoryId == categoryId }
+    fun getEpisodesForCategory(
+        categoryId: Int,
+        source: ContentSource = ContentSource.DRAMA_COLLECTION,
+        includeHidden: Boolean = false
+    ): List<EpisodeItem> {
+        val scopedKey = "${source.sourceId}_cat_$categoryId"
+        if (source == ContentSource.DRAMANITAM_DUBBED) {
+            val raw = _scopedEpisodesMap.value[scopedKey]
+                ?: _hindiUrduLatestEpisodes.value.filter {
+                    it.source == ContentSource.DRAMANITAM_DUBBED && it.categoryId == categoryId
+                }
+            return raw.sortedBy { it.episodeNumber }
+        }
+        val raw = _scopedEpisodesMap.value[scopedKey]
+            ?: _rawLatestEpisodes.value.filter {
+                it.source == ContentSource.DRAMA_COLLECTION && it.categoryId == categoryId
+            }
         return contentRepository.applyAdminOverridesToEpisodes(
             episodes = raw,
             overrides = catalogOverrides.value,
             includeHiddenForAdmin = includeHidden
         ).sortedBy { it.episodeNumber }
+    }
+
+    fun findDramaById(dramaId: String): DramaSeries? {
+        return userDramas.value.firstOrNull { it.id == dramaId }
+            ?: _hindiUrduDramas.value.firstOrNull { it.id == dramaId }
     }
 
     fun refreshCacheStats() {
@@ -447,10 +566,11 @@ class DastanViewModel(
     fun clearLocalCache() {
         viewModelScope.launch {
             contentRepository.clearAllCaches()
-            _categoryEpisodesMap.value = emptyMap()
-            _categoryPageMap.value = emptyMap()
+            dramaNitamRepository.clearMemoryCaches()
+            _scopedEpisodesMap.value = emptyMap()
+            _scopedPageMap.value = emptyMap()
             _cacheStats.value = contentRepository.getCacheStats()
-            _statusMessage.value = "Cleared local metadata & image caches. Reloading catalog..."
+            _statusMessage.value = "Cleared local metadata & image caches. Reloading both catalogs..."
             refreshContent(forceRefresh = true)
         }
     }
@@ -604,6 +724,10 @@ class DastanViewModel(
             val (dramas, latestEps) = contentRepository.fetchDramasAndLatestEpisodes(forceRefresh = false)
             _rawDramas.value = dramas
             _rawLatestEpisodes.value = latestEps
+            val (dubbedDramas, dubbedEps, dubbedCats) = dramaNitamRepository.fetchDubbedCatalog(forceRefresh = true)
+            _hindiUrduDramas.value = dubbedDramas
+            _hindiUrduLatestEpisodes.value = dubbedEps
+            _hindiUrduCategories.value = dubbedCats
             _cacheStats.value = contentRepository.getCacheStats()
             val currentCfg = appConfig.value
             repository.saveAppConfig(
@@ -666,6 +790,7 @@ class DastanViewModel(
                 DastanViewModel(
                     repository = DastanRepository(db),
                     contentRepository = WordPressContentRepository(app),
+                    dramaNitamRepository = DramaNitamContentRepository(app),
                     currentUserId = currentUserId
                 )
             }

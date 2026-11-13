@@ -240,7 +240,19 @@ fun DramaDetailScreen(
                         .padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        drama.genreTags.take(3).forEach { tag ->
+                        Surface(
+                            color = RoyalVioletAccent.copy(alpha = 0.9f),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = drama.source.badgeLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MidnightBg,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                        drama.genreTags.take(2).forEach { tag ->
                             Surface(
                                 color = MidnightSecondaryBg.copy(alpha = 0.9f),
                                 shape = RoundedCornerShape(4.dp)
@@ -273,7 +285,7 @@ fun DramaDetailScreen(
                         "Season ${seasonsList.first().seasonNumber}"
                     }
                     Text(
-                        text = "$seasonText • ${drama.episodeCount} Total Episodes • Urdu Subtitled/Dubbed",
+                        text = "$seasonText • ${drama.episodeCount} Total Episodes • ${drama.audioLanguage}",
                         style = MaterialTheme.typography.bodySmall,
                         color = SecondaryMutedText
                     )
@@ -888,7 +900,11 @@ private const val DASTAN_PLAYER_BRIDGE_JS = """
 })();
 """
 
-private fun loadStreamUrlIntoWebView(webView: WebView, rawUrl: String) {
+private fun loadStreamUrlIntoWebView(
+    webView: WebView,
+    rawUrl: String,
+    refererUrl: String = "https://giveme5.co/"
+) {
     val normalizedUrl = rawUrl.trim().let {
         when {
             it.startsWith("//") -> "https:$it"
@@ -918,7 +934,7 @@ private fun loadStreamUrlIntoWebView(webView: WebView, rawUrl: String) {
             </html>
         """.trimIndent()
         webView.loadDataWithBaseURL(
-            "https://giveme5.co/",
+            refererUrl,
             directHtml,
             "text/html",
             "UTF-8",
@@ -929,7 +945,7 @@ private fun loadStreamUrlIntoWebView(webView: WebView, rawUrl: String) {
         // cross-origin iframe isolation and Vidmoly sandbox checks never block playback
         webView.loadUrl(
             normalizedUrl,
-            mapOf("Referer" to "https://giveme5.co/")
+            mapOf("Referer" to refererUrl)
         )
     }
 }
@@ -1302,7 +1318,17 @@ fun VideoPlayerScreen(
                                         targetHost.contains("mycdn") ||
                                         targetHost.contains("giveme5.co") ||
                                         targetHost.contains("vk.com") ||
-                                        targetHost.contains("dailymotion")
+                                        targetHost.contains("dailymotion") ||
+                                        targetHost.contains("dramanitam") ||
+                                        targetHost.contains("blogspot") ||
+                                        targetHost.contains("terabox") ||
+                                        targetHost.contains("xcloud") ||
+                                        targetHost.contains("gdflix") ||
+                                        targetHost.contains("pixeldrain") ||
+                                        targetHost.contains("google.com") ||
+                                        targetHost.contains("googleusercontent") ||
+                                        targetHost.contains("nibosob") ||
+                                        targetHost.contains("hivenew")
                                     return !isAllowedPlayer
                                 }
 
@@ -1325,7 +1351,7 @@ fun VideoPlayerScreen(
                                 }
                             }
                             webViewRef = this
-                            loadStreamUrlIntoWebView(this, activeEmbedUrl)
+                            loadStreamUrlIntoWebView(this, activeEmbedUrl, episode.source.refererUrl)
                         }
                     },
                     update = { view ->
@@ -1340,7 +1366,7 @@ fun VideoPlayerScreen(
                         if (normalizedTarget.isNotBlank() && view.tag != normalizedTarget) {
                             isLoadingWebView = true
                             playerError = null
-                            loadStreamUrlIntoWebView(view, normalizedTarget)
+                            loadStreamUrlIntoWebView(view, normalizedTarget, episode.source.refererUrl)
                         }
                     },
                     modifier = Modifier.fillMaxSize()
@@ -1720,6 +1746,8 @@ fun VideoPlayerScreen(
                         val label = when {
                             url.contains("vidmoly", ignoreCase = true) -> "Server ${idx + 1} (Vidmoly HD)"
                             url.contains("ok.ru", ignoreCase = true) -> "Server ${idx + 1} (OK.ru)"
+                            url.contains("blogspot", ignoreCase = true) -> "Server ${idx + 1} (Episode Portal)"
+                            url.contains("dramanitam", ignoreCase = true) -> "Server ${idx + 1} (DramaNitam)"
                             else -> "Server ${idx + 1}"
                         }
                         FilterChip(
@@ -1729,7 +1757,7 @@ fun VideoPlayerScreen(
                                     selectedServerIndex = idx
                                     playerError = null
                                     isLoadingWebView = true
-                                    webViewRef?.let { loadStreamUrlIntoWebView(it, url) }
+                                    webViewRef?.let { loadStreamUrlIntoWebView(it, url, episode.source.refererUrl) }
                                 }
                             },
                             label = {

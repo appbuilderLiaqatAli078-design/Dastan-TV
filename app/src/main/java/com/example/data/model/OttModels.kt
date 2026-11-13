@@ -1,39 +1,173 @@
 package com.example.data.model
 
+import androidx.compose.runtime.Immutable
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
-import com.google.firebase.firestore.IgnoreExtraProperties
 import com.google.firebase.firestore.ServerTimestamp
 
-@IgnoreExtraProperties
+enum class ContentSource(
+    val sourceId: String,
+    val displayTitle: String,
+    val badgeLabel: String,
+    val subtitle: String,
+    val apiBaseUrl: String,
+    val refererUrl: String
+) {
+    DRAMA_COLLECTION(
+        sourceId = "giveme5",
+        displayTitle = "Drama Collection",
+        badgeLabel = "Drama Collection",
+        subtitle = "Turkish & Historical Series • Urdu Subtitles",
+        apiBaseUrl = "https://giveme5.co/wp-json/wp/v2/",
+        refererUrl = "https://giveme5.co/"
+    ),
+    DRAMANITAM_DUBBED(
+        sourceId = "dramanitam",
+        displayTitle = "Hindi & Urdu Dubbed",
+        badgeLabel = "DramaNitam Dubbed",
+        subtitle = "Korean, Turkish & Asian Dramas • Hindi/Urdu Dubbed",
+        apiBaseUrl = "https://dramanitam.com/wp-json/wp/v2/",
+        refererUrl = "https://www.dramanitam.com/"
+    );
+
+    companion object {
+        fun fromSourceId(raw: String?): ContentSource {
+            return entries.firstOrNull { it.sourceId.equals(raw, ignoreCase = true) }
+                ?: DRAMA_COLLECTION
+        }
+    }
+}
+
+@Immutable
+data class DramaSeason(
+    val seasonNumber: Int,
+    val categoryId: Int,
+    val categoryName: String,
+    val slug: String,
+    val episodeCount: Int,
+    val hasExplicitSeasonMetadata: Boolean = true,
+    val source: ContentSource = ContentSource.DRAMA_COLLECTION,
+    val episodePortalUrl: String = ""
+) {
+    val scopedCategoryKey: String
+        get() = "${source.sourceId}_cat_$categoryId"
+}
+
+@Immutable
+data class DramaSeries(
+    val id: String,
+    val categoryId: Int,
+    val title: String,
+    val originalTitle: String,
+    val slug: String,
+    val description: String,
+    val posterUrl: String,
+    val thumbnailUrl: String = posterUrl,
+    val episodeCount: Int,
+    val seasonNumber: Int,
+    val genreTags: List<String>,
+    val rating: String = "9.6",
+    val releaseYear: String = "2024",
+    val isFeatured: Boolean = false,
+    val isHidden: Boolean = false,
+    val isVipOnly: Boolean = false,
+    val priorityOrder: Int = 100,
+    val hasMissingPoster: Boolean = false,
+    val seasons: List<DramaSeason> = emptyList(),
+    val source: ContentSource = ContentSource.DRAMA_COLLECTION,
+    val sourceCategoryName: String = "",
+    val audioLanguage: String = "Urdu Subtitles",
+    val episodePortalUrl: String = ""
+) {
+    val totalSeasonsCount: Int
+        get() = seasons.size.coerceAtLeast(1)
+
+    val allCategoryIds: List<Int>
+        get() = if (seasons.isNotEmpty()) seasons.map { it.categoryId }.distinct() else listOf(categoryId)
+
+    val scopedCategoryKey: String
+        get() = "${source.sourceId}_cat_$categoryId"
+
+    fun categoryIdForSeason(targetSeason: Int): Int {
+        return seasons.firstOrNull { it.seasonNumber == targetSeason }?.categoryId ?: categoryId
+    }
+
+    fun scopedCategoryKeyForSeason(targetSeason: Int): String {
+        return "${source.sourceId}_cat_${categoryIdForSeason(targetSeason)}"
+    }
+}
+
+@Immutable
+data class EpisodeItem(
+    val id: String,
+    val postId: Int,
+    val categoryId: Int,
+    val dramaTitle: String,
+    val title: String,
+    val cleanTitle: String = title,
+    val episodeNumber: Int,
+    val seasonNumber: Int,
+    val description: String,
+    val publishedDate: String,
+    val posterUrl: String,
+    val thumbnailUrl: String = posterUrl,
+    val durationLabel: String = "2h 10m",
+    val primaryEmbedUrl: String,
+    val backupEmbedUrls: List<String>,
+    val sourcePostUrl: String,
+    val isPlayable: Boolean,
+    val isHidden: Boolean = false,
+    val isFeatured: Boolean = false,
+    val isVipOnly: Boolean = false,
+    val hasMissingPoster: Boolean = false,
+    val hasMissingVideo: Boolean = false,
+    val hasExplicitSeason: Boolean = true,
+    val source: ContentSource = ContentSource.DRAMA_COLLECTION,
+    val sourceCategoryName: String = "",
+    val audioLanguage: String = "Urdu Subtitles"
+) {
+    val allServers: List<String>
+        get() = (listOf(primaryEmbedUrl) + backupEmbedUrls)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+    val scopedCategoryKey: String
+        get() = "${source.sourceId}_cat_$categoryId"
+}
+
+@Immutable
 data class UserProfile(
     @DocumentId val id: String = "",
     val userId: String = "",
     val email: String = "",
     val displayName: String = "",
     val photoUrl: String = "",
-    val role: String = "user", // "user" or "admin"
-    val membershipPlan: String = "FREE", // "FREE" or "YEARLY_VIP"
-    val preferredQuality: String = "AUTO", // "AUTO", "1080P", "720P", "480P"
+    val role: String = "user",
+    val membershipPlan: String = "FREE",
+    val preferredQuality: String = "AUTO",
     val subtitleEnabled: Boolean = true,
     val isBlocked: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
-)
+) {
+    val uid: String
+        get() = userId.ifBlank { id }
+}
 
-@IgnoreExtraProperties
+@Immutable
 data class FavoriteItem(
     @DocumentId val id: String = "",
     val userId: String = "",
     val dramaId: String = "",
     val title: String = "",
     val posterUrl: String = "",
-    val episodeCount: Long = 0L,
+    val episodeCount: Int = 0,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
-@IgnoreExtraProperties
+@Immutable
 data class WatchHistoryItem(
     @DocumentId val id: String = "",
     val userId: String = "",
@@ -44,44 +178,31 @@ data class WatchHistoryItem(
     val posterUrl: String = "",
     val embedUrl: String = "",
     val progressMs: Long = 0L,
-    val durationMs: Long = 2700000L, // Default 45m episode duration
+    val durationMs: Long = 1L,
     val completed: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
-    val cleanDramaTitle: String
-        get() = dramaTitle
-            .replace(Regex("\\s*\\(S\\d+\\s*[•·-]?\\s*E\\d+\\)", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("\\s*•\\s*Season\\s*\\d+.*", RegexOption.IGNORE_CASE), "")
-            .trim()
-            .ifBlank { "Turkish Historical Drama" }
+    val progressFraction: Float
+        get() = if (durationMs <= 0L) 0f else (progressMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
 
     val parsedSeasonNumber: Int
         get() {
-            val tagMatch = Regex("\\(S(\\d+)\\s*[•·-]?\\s*E(\\d+)\\)", RegexOption.IGNORE_CASE)
-                .find(dramaTitle)
-            if (tagMatch != null) {
-                return tagMatch.groupValues.getOrNull(1)?.toIntOrNull() ?: 1
-            }
-            val titleMatch = Regex("(?:Season|S)\\s*(\\d+)", RegexOption.IGNORE_CASE)
-                .find("$dramaTitle $episodeTitle")
-            return titleMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+            val regex = Regex("""\(S(\d+)\s*[•·-]\s*E(\d+)\)""", RegexOption.IGNORE_CASE)
+            return regex.find(dramaTitle)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
         }
 
     val parsedEpisodeNumber: Int
         get() {
-            val tagMatch = Regex("\\(S(\\d+)\\s*[•·-]?\\s*E(\\d+)\\)", RegexOption.IGNORE_CASE)
-                .find(dramaTitle)
-            if (tagMatch != null) {
-                return tagMatch.groupValues.getOrNull(2)?.toIntOrNull() ?: 1
-            }
-            val epMatch = Regex("(?:Episode|Ep|E)\\s*(\\d+)", RegexOption.IGNORE_CASE)
-                .find(episodeTitle)
-            return epMatch?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+            val regex = Regex("""\(S(\d+)\s*[•·-]\s*E(\d+)\)""", RegexOption.IGNORE_CASE)
+            return regex.find(dramaTitle)?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 1
         }
+
+    val cleanDramaTitle: String
+        get() = dramaTitle.replace(Regex("""\s*\(S\d+\s*[•·-]\s*E\d+\)\s*$""", RegexOption.IGNORE_CASE), "").trim()
 }
 
-@IgnoreExtraProperties
+@Immutable
 data class SavedEpisodeItem(
     @DocumentId val id: String = "",
     val userId: String = "",
@@ -96,11 +217,10 @@ data class SavedEpisodeItem(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
-@IgnoreExtraProperties
+@Immutable
 data class CatalogOverride(
     @DocumentId val id: String = "",
-    val appId: String = "dastan_tv",
-    val targetType: String = "DRAMA", // "DRAMA", "EPISODE", "CATEGORY", "BANNER"
+    val targetType: String = "DRAMA", // DRAMA or EPISODE
     val targetId: String = "",
     val customTitle: String = "",
     val customDescription: String = "",
@@ -108,19 +228,19 @@ data class CatalogOverride(
     val isHidden: Boolean = false,
     val isFeatured: Boolean = false,
     val isVipOnly: Boolean = false,
-    val priorityOrder: Long = 0L,
+    val priorityOrder: Long = 100L,
     val updatedBy: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
-@IgnoreExtraProperties
+@Immutable
 data class AppConfig(
     @DocumentId val id: String = "",
-    val appId: String = "dastan_tv",
-    val announcementBanner: String = "Stream authentic Urdu-dubbed & subtitled Turkish historical dramas in HD.",
+    val appId: String = "dastan_tv_global",
+    val announcementBanner: String = "Welcome to Dastan TV — Stream Ottoman & Historical Epics in Urdu",
     val maintenanceMode: Boolean = false,
-    val yearlyVipPricePkr: Long = 2499L,
+    val yearlyVipPricePkr: Long = 1000L,
     val paymentGatewayEnabled: Boolean = false,
     val lastApiSyncEpochMs: Long = 0L,
     val lastApiLatencyMs: Long = 0L,
@@ -130,84 +250,7 @@ data class AppConfig(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
-data class DramaSeason(
-    val seasonNumber: Int,
-    val categoryId: Int,
-    val categoryName: String,
-    val slug: String = "",
-    val episodeCount: Int = 0,
-    val hasExplicitSeasonMetadata: Boolean = true
-) {
-    val displayLabel: String
-        get() = if (hasExplicitSeasonMetadata || seasonNumber > 0) "Season $seasonNumber" else "Episodes"
-}
-
-// Domain models for Content API + Merged Admin Overrides
-data class DramaSeries(
-    val id: String,
-    val categoryId: Int,
-    val title: String,
-    val originalTitle: String,
-    val slug: String,
-    val description: String,
-    val posterUrl: String,
-    val episodeCount: Int,
-    val seasonNumber: Int,
-    val genreTags: List<String>,
-    val isFeatured: Boolean = false,
-    val isHidden: Boolean = false,
-    val isVipOnly: Boolean = false,
-    val priorityOrder: Int = 0,
-    val hasMissingPoster: Boolean = false,
-    val thumbnailUrl: String = posterUrl,
-    val seasons: List<DramaSeason> = listOf(
-        DramaSeason(
-            seasonNumber = seasonNumber.coerceAtLeast(1),
-            categoryId = categoryId,
-            categoryName = title,
-            slug = slug,
-            episodeCount = episodeCount
-        )
-    )
-) {
-    val totalSeasonsCount: Int
-        get() = seasons.size.coerceAtLeast(1)
-
-    val allCategoryIds: List<Int>
-        get() = if (seasons.isNotEmpty()) seasons.map { it.categoryId }.distinct() else listOf(categoryId)
-
-    fun categoryIdForSeason(targetSeason: Int): Int {
-        return seasons.firstOrNull { it.seasonNumber == targetSeason }?.categoryId
-            ?: seasons.firstOrNull()?.categoryId
-            ?: categoryId
-    }
-}
-
-data class EpisodeItem(
-    val id: String,
-    val postId: Int,
-    val categoryId: Int,
-    val dramaTitle: String,
-    val title: String,
-    val episodeNumber: Int,
-    val seasonNumber: Int,
-    val description: String,
-    val publishedDate: String,
-    val posterUrl: String,
-    val primaryEmbedUrl: String,
-    val backupEmbedUrls: List<String>,
-    val sourcePostUrl: String,
-    val isPlayable: Boolean,
-    val isHidden: Boolean = false,
-    val isVipOnly: Boolean = false,
-    val hasMissingPoster: Boolean = false,
-    val hasMissingVideo: Boolean = false,
-    val cleanTitle: String = title,
-    val thumbnailUrl: String = posterUrl,
-    val durationLabel: String = "",
-    val hasExplicitSeason: Boolean = true
-)
-
+@Immutable
 data class ApiHealthReport(
     val endpointUrl: String = "https://giveme5.co/wp-json/wp/v2",
     val isHealthy: Boolean = true,
@@ -223,6 +266,7 @@ data class ApiHealthReport(
     val errorMessage: String? = null
 )
 
+@Immutable
 data class CacheStats(
     val cachedDramasCount: Int = 0,
     val cachedSeasonsCount: Int = 0,
@@ -232,9 +276,14 @@ data class CacheStats(
     val cacheTtlMinutes: Int = 30
 ) {
     val formattedDiskSize: String
-        get() {
-            val mb = diskCacheBytes.toDouble() / (1024.0 * 1024.0)
-            return if (mb >= 0.1) String.format(java.util.Locale.US, "%.1f MB", mb)
-            else "${(diskCacheBytes / 1024L).coerceAtLeast(0L)} KB"
-        }
+        get() = "%.1f MB".format(diskCacheBytes.toDouble() / (1024.0 * 1024.0))
 }
+
+@Immutable
+data class CatalogSyncDelta(
+    val newDramasCount: Int = 0,
+    val newSeasonsCount: Int = 0,
+    val newEpisodesCount: Int = 0,
+    val updatedEpisodesCount: Int = 0,
+    val syncedAtEpochMs: Long = System.currentTimeMillis()
+)

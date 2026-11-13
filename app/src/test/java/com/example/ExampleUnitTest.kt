@@ -4,9 +4,14 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.LocalCatalogCacheDatabase
 import com.example.data.model.CatalogOverride
+import com.example.data.model.ContentSource
 import com.example.data.model.WatchHistoryItem
+import com.example.data.remote.DramaNitamCategory
+import com.example.data.remote.DramaNitamContentRepository
 import com.example.data.remote.WordPressContentRepository
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -287,5 +292,104 @@ class ExampleUnitTest {
         val newDrama = updatedDramas.first { it.title == "Salahuddin Ayubi" }
         assertEquals(1, newDrama.seasons.size)
         assertEquals(28, newDrama.episodeCount)
+    }
+
+    @Test
+    fun dramaNitamParser_parsesHindiUrduDubbedPostsAndEpisodePortalAndIsolatesFromDramaCollection() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = LocalCatalogCacheDatabase.getInstance(context)
+        db.clearAllLocalCaches(context)
+
+        val nitamRepo = DramaNitamContentRepository(context)
+        val catMap = mapOf(
+            6 to DramaNitamCategory(id = 6, name = "Turkish Dramas", slug = "turkish-dramas", count = 43),
+            5 to DramaNitamCategory(id = 5, name = "Korean Dramas", slug = "korean-dramas", count = 540)
+        )
+
+        val postJson = JSONObject(
+            """
+            {
+              "id": 5322,
+              "date": "2026-07-16T23:54:51",
+              "slug": "arafta-bound-by-fate",
+              "link": "https://www.dramanitam.com/arafta-bound-by-fate/",
+              "title": {"rendered": "Arafta: Bound by Fate [Turkish Drama] in Hindi Dubbed &#8211; Episodes 12-18 Added &#8211; DramaNitam"},
+              "excerpt": {"rendered": "<p>Mercan and Ates face a fateful reckoning in this gripping Turkish romance.</p>"},
+              "content": {"rendered": "<ul><li>Drama: Turkish</li><li>Audio: Hindi Dubbed</li><li>Season: 02</li><li>Episodes: 18</li><li>Duration: 40 mint.</li></ul><ol><li>For Episode Wise Links ~ <a href=\"https://dramanitam04.blogspot.com/p/abbf-s02-163.html\">CLICK HERE</a></li></ol><img src=\"https://www.dramanitam.com/wp-content/uploads/2026/07/Arafta_-Bound-by-Fate.jpg\"/>"},
+              "categories": [6]
+            }
+            """.trimIndent()
+        )
+
+        val parsed = nitamRepo.parseDramaPostObject(postJson, catMap)
+        assertNotNull(parsed)
+        assertEquals("Arafta: Bound by Fate", parsed!!.cleanDramaTitle)
+        assertEquals(2, parsed.seasonNumber)
+        assertEquals(18, parsed.episodeCount)
+        assertEquals("Turkish Dramas", parsed.categoryName)
+        assertEquals("Hindi Dubbed", parsed.audioLanguage)
+        assertEquals("https://dramanitam04.blogspot.com/p/abbf-s02-163.html", parsed.episodePortalUrl)
+
+        val nitamDramas = nitamRepo.groupPostsIntoMultiSeasonDramas(listOf(parsed))
+        assertEquals(1, nitamDramas.size)
+        val nitamDrama = nitamDramas.first()
+        assertEquals(ContentSource.DRAMANITAM_DUBBED, nitamDrama.source)
+        assertEquals("dramanitam_drama_5322", nitamDrama.id)
+
+        // Verify episode-wise HTML parser extracts individual Episode items with server mirrors
+        val samplePortalHtml = """
+            <div>
+              Episode: 01
+              <a href="https://teraboxlinks.com/xXaxKIl">GDrive</a> |
+              <a href="https://teraboxlinks.com/aHqma">XCloud</a> |
+              <a href="https://teraboxlinks.com/Q1nC">Pixeldrain</a>
+            </div>
+            <div>
+              Episode: 02
+              <a href="https://teraboxlinks.com/ep2gdrive">GDrive</a> |
+              <a href="https://teraboxlinks.com/ep2xcloud">XCloud</a>
+            </div>
+        """.trimIndent()
+
+        val portalEpisodes = nitamRepo.parseEpisodeWiseHtmlPage(
+            html = samplePortalHtml,
+            seasonPostId = 5322,
+            dramaTitle = nitamDrama.title,
+            seasonNumber = 2,
+            posterUrl = nitamDrama.posterUrl,
+            durationLabel = "40m",
+            audioLanguage = "Hindi Dubbed",
+            portalUrl = parsed.episodePortalUrl
+        )
+        assertEquals(2, portalEpisodes.size)
+        assertEquals(1, portalEpisodes[0].episodeNumber)
+        assertEquals("https://teraboxlinks.com/xXaxKIl", portalEpisodes[0].primaryEmbedUrl)
+        assertTrue(portalEpisodes[0].backupEmbedUrls.contains("https://teraboxlinks.com/aHqma"))
+        assertEquals(ContentSource.DRAMANITAM_DUBBED, portalEpisodes[0].source)
+
+        // Verify strict SQLite separation between ContentSource.DRAMA_COLLECTION and ContentSource.DRAMANITAM_DUBBED
+        val giveMe5Repo = WordPressContentRepository(context)
+        val giveMe5Dramas = giveMe5Repo.parseCategoriesJson(
+            """[{"id": 129, "count": 15, "name": "Sultan Mehmed Fateh", "slug": "sultan-mehmed-fateh", "description": "Season 1"}]""",
+            emptyMap(),
+            emptyMap()
+        )
+        db.saveDramas(giveMe5Dramas, ContentSource.DRAMA_COLLECTION)
+        db.saveDramas(nitamDramas, ContentSource.DRAMANITAM_DUBBED)
+
+        val cachedCollection = db.getCachedDramas(ContentSource.DRAMA_COLLECTION)
+        val cachedDubbed = db.getCachedDramas(ContentSource.DRAMANITAM_DUBBED)
+
+        assertEquals(1, cachedCollection.size)
+        assertEquals("Sultan Mehmed Fateh", cachedCollection.first().title)
+        assertEquals(ContentSource.DRAMA_COLLECTION, cachedCollection.first().source)
+
+        assertEquals(1, cachedDubbed.size)
+        assertEquals("Arafta: Bound by Fate", cachedDubbed.first().title)
+        assertEquals(ContentSource.DRAMANITAM_DUBBED, cachedDubbed.first().source)
+        assertFalse(cachedCollection.any { it.source == ContentSource.DRAMANITAM_DUBBED })
+        assertFalse(cachedDubbed.any { it.source == ContentSource.DRAMA_COLLECTION })
+
+        db.clearAllLocalCaches(context)
     }
 }

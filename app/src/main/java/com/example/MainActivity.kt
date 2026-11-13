@@ -49,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.auth.GoogleAuthHelper
 import com.example.data.local.LocalCatalogCacheDatabase
+import com.example.data.model.ContentSource
 import com.example.data.model.DramaSeries
 import com.example.data.model.EpisodeItem
 import com.example.ui.screens.AdminDashboardScreen
@@ -61,6 +62,7 @@ import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.MembershipPlansScreen
 import com.example.ui.screens.OnboardingScreen
 import com.example.ui.screens.ProfileAndSettingsScreen
+import com.example.ui.screens.SectionSeeAllScreen
 import com.example.ui.screens.SplashScreen
 import com.example.ui.screens.VideoPlayerScreen
 import com.example.ui.screens.WatchHistoryScreen
@@ -114,9 +116,13 @@ private enum class BottomNavTab(
 
 private sealed interface ActiveOverlayScreen {
     data object None : ActiveOverlayScreen
+    data class SectionSeeAll(
+        val source: ContentSource
+    ) : ActiveOverlayScreen
     data class DramaDetail(
         val drama: DramaSeries,
-        val selectedSeason: Int = drama.seasonNumber
+        val selectedSeason: Int = drama.seasonNumber,
+        val returnToSeeAllSource: ContentSource? = null
     ) : ActiveOverlayScreen
     data class VideoPlayer(
         val episode: EpisodeItem,
@@ -200,7 +206,11 @@ private fun AuthenticatedDastanWorkspace(
     val adminDramas by viewModel.adminDramas.collectAsStateWithLifecycle()
     val userLatestEpisodes by viewModel.userLatestEpisodes.collectAsStateWithLifecycle()
     val adminLatestEpisodes by viewModel.adminLatestEpisodes.collectAsStateWithLifecycle()
-    val categoryEpisodesMap by viewModel.categoryEpisodesMap.collectAsStateWithLifecycle()
+    val hindiUrduDramas by viewModel.hindiUrduDramas.collectAsStateWithLifecycle()
+    val hindiUrduLatestEpisodes by viewModel.hindiUrduLatestEpisodes.collectAsStateWithLifecycle()
+    val hindiUrduCategories by viewModel.hindiUrduCategories.collectAsStateWithLifecycle()
+    val isLoadingHindiUrdu by viewModel.isLoadingHindiUrdu.collectAsStateWithLifecycle()
+    val scopedEpisodesMap by viewModel.scopedEpisodesMap.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val watchHistory by viewModel.watchHistory.collectAsStateWithLifecycle()
     val savedEpisodes by viewModel.savedEpisodes.collectAsStateWithLifecycle()
@@ -233,16 +243,56 @@ private fun AuthenticatedDastanWorkspace(
     val isUserVipOrAdmin = isAdmin || userProfile?.membershipPlan == "YEARLY_VIP"
 
     when (val currentOverlay = overlayScreen) {
+        is ActiveOverlayScreen.SectionSeeAll -> {
+            val sectionSource = currentOverlay.source
+            val sectionDramas = if (sectionSource == ContentSource.DRAMANITAM_DUBBED) {
+                hindiUrduDramas
+            } else {
+                userDramas
+            }
+            val sectionLoading = if (sectionSource == ContentSource.DRAMANITAM_DUBBED) {
+                isLoadingHindiUrdu
+            } else {
+                isLoadingContent
+            }
+            SectionSeeAllScreen(
+                source = sectionSource,
+                dramas = sectionDramas,
+                categories = if (sectionSource == ContentSource.DRAMANITAM_DUBBED) hindiUrduCategories else emptyList(),
+                favorites = favorites,
+                isLoading = sectionLoading,
+                onBack = { overlayScreen = ActiveOverlayScreen.None },
+                onSelectDrama = { drama ->
+                    val firstSeason = drama.seasons.firstOrNull()?.seasonNumber ?: drama.seasonNumber
+                    viewModel.loadEpisodesForDrama(drama, seasonNumber = firstSeason)
+                    overlayScreen = ActiveOverlayScreen.DramaDetail(
+                        drama = drama,
+                        selectedSeason = firstSeason,
+                        returnToSeeAllSource = sectionSource
+                    )
+                },
+                onToggleFavorite = { drama -> viewModel.toggleFavorite(drama) },
+                onRefresh = { viewModel.refreshContent(forceRefresh = true) }
+            )
+        }
+
         is ActiveOverlayScreen.DramaDetail -> {
-            val activeDrama = userDramas.firstOrNull { it.id == currentOverlay.drama.id }
+            // Look up active drama ONLY in its own source list to guarantee strict separation
+            val sourceDramas = if (currentOverlay.drama.source == ContentSource.DRAMANITAM_DUBBED) {
+                hindiUrduDramas
+            } else {
+                userDramas
+            }
+            val activeDrama = sourceDramas.firstOrNull { it.id == currentOverlay.drama.id }
                 ?: currentOverlay.drama
             val activeSeason = currentOverlay.selectedSeason
             val seasonEps = remember(
                 activeDrama,
                 activeSeason,
-                categoryEpisodesMap,
+                scopedEpisodesMap,
                 catalogOverrides,
-                userLatestEpisodes
+                userLatestEpisodes,
+                hindiUrduLatestEpisodes
             ) {
                 viewModel.getEpisodesForDramaSeason(
                     drama = activeDrama,
@@ -264,7 +314,11 @@ private fun AuthenticatedDastanWorkspace(
                 savedEpisodes = savedEpisodes,
                 isLoadingEpisodes = isLoadingEpisodes,
                 isUserVipOrAdmin = isUserVipOrAdmin,
-                onBack = { overlayScreen = ActiveOverlayScreen.None },
+                onBack = {
+                    overlayScreen = currentOverlay.returnToSeeAllSource?.let {
+                        ActiveOverlayScreen.SectionSeeAll(it)
+                    } ?: ActiveOverlayScreen.None
+                },
                 onToggleFavorite = { viewModel.toggleFavorite(activeDrama) },
                 onPlayEpisode = { ep ->
                     overlayScreen = ActiveOverlayScreen.VideoPlayer(
@@ -281,10 +335,16 @@ private fun AuthenticatedDastanWorkspace(
         }
 
         is ActiveOverlayScreen.VideoPlayer -> {
-            val parentDrama = remember(currentOverlay.episode, userDramas) {
-                userDramas.firstOrNull { drama ->
-                    drama.allCategoryIds.contains(currentOverlay.episode.categoryId) ||
-                        drama.title.equals(currentOverlay.episode.dramaTitle, ignoreCase = true)
+            val sameSourceDramas = if (currentOverlay.episode.source == ContentSource.DRAMANITAM_DUBBED) {
+                hindiUrduDramas
+            } else {
+                userDramas
+            }
+            val parentDrama = remember(currentOverlay.episode, sameSourceDramas) {
+                sameSourceDramas.firstOrNull { drama ->
+                    drama.source == currentOverlay.episode.source &&
+                        (drama.allCategoryIds.contains(currentOverlay.episode.categoryId) ||
+                            drama.title.equals(currentOverlay.episode.dramaTitle, ignoreCase = true))
                 }
             }
             val nextSeasonObj = remember(currentOverlay.episode, parentDrama) {
@@ -343,7 +403,17 @@ private fun AuthenticatedDastanWorkspace(
                 watchHistory = watchHistory,
                 onBack = { overlayScreen = ActiveOverlayScreen.None },
                 onResumeEpisode = { item ->
-                    val matchedEp = userLatestEpisodes.firstOrNull {
+                    val resolvedSource = if (item.episodeId.startsWith("dramanitam_")) {
+                        ContentSource.DRAMANITAM_DUBBED
+                    } else {
+                        ContentSource.DRAMA_COLLECTION
+                    }
+                    val sourceLatestList = if (resolvedSource == ContentSource.DRAMANITAM_DUBBED) {
+                        hindiUrduLatestEpisodes
+                    } else {
+                        userLatestEpisodes
+                    }
+                    val matchedEp = sourceLatestList.firstOrNull {
                         it.id == item.episodeId || "ep_${it.postId}" == item.episodeId
                     } ?: EpisodeItem(
                         id = item.episodeId,
@@ -360,10 +430,12 @@ private fun AuthenticatedDastanWorkspace(
                         primaryEmbedUrl = item.embedUrl,
                         backupEmbedUrls = emptyList(),
                         sourcePostUrl = "",
-                        isPlayable = item.embedUrl.isNotBlank()
+                        isPlayable = item.embedUrl.isNotBlank(),
+                        source = resolvedSource
                     )
                     val seasonSiblings = viewModel.getEpisodesForCategory(
                         categoryId = matchedEp.categoryId,
+                        source = matchedEp.source,
                         includeHidden = false
                     ).ifEmpty { listOf(matchedEp) }
                     overlayScreen = ActiveOverlayScreen.VideoPlayer(
@@ -466,6 +538,10 @@ private fun AuthenticatedDastanWorkspace(
                             HomeScreen(
                                 dramas = userDramas,
                                 latestEpisodes = userLatestEpisodes,
+                                hindiUrduDramas = hindiUrduDramas,
+                                hindiUrduLatestEpisodes = hindiUrduLatestEpisodes,
+                                hindiUrduCategories = hindiUrduCategories,
+                                isLoadingHindiUrdu = isLoadingHindiUrdu,
                                 watchHistory = watchHistory,
                                 favorites = favorites,
                                 userProfile = userProfile,
@@ -481,12 +557,20 @@ private fun AuthenticatedDastanWorkspace(
                                     )
                                 },
                                 onPlayEpisode = { ep ->
+                                    val sameSourceLatest = if (ep.source == ContentSource.DRAMANITAM_DUBBED) {
+                                        hindiUrduLatestEpisodes
+                                    } else {
+                                        userLatestEpisodes
+                                    }
                                     val siblings = viewModel.getEpisodesForCategory(
                                         categoryId = ep.categoryId,
+                                        source = ep.source,
                                         includeHidden = false
                                     ).ifEmpty {
-                                        userLatestEpisodes.filter {
-                                            it.categoryId == ep.categoryId && it.seasonNumber == ep.seasonNumber
+                                        sameSourceLatest.filter {
+                                            it.source == ep.source &&
+                                                it.categoryId == ep.categoryId &&
+                                                it.seasonNumber == ep.seasonNumber
                                         }.ifEmpty { listOf(ep) }
                                     }
                                     overlayScreen = ActiveOverlayScreen.VideoPlayer(
@@ -495,6 +579,9 @@ private fun AuthenticatedDastanWorkspace(
                                     )
                                 },
                                 onToggleFavorite = { drama -> viewModel.toggleFavorite(drama) },
+                                onOpenSeeAllSection = { sectionSource ->
+                                    overlayScreen = ActiveOverlayScreen.SectionSeeAll(sectionSource)
+                                },
                                 onOpenSearch = { selectedTab = BottomNavTab.EXPLORE },
                                 onOpenWatchHistory = { overlayScreen = ActiveOverlayScreen.WatchHistory },
                                 onOpenMembership = { overlayScreen = ActiveOverlayScreen.MembershipPlans },
@@ -509,6 +596,9 @@ private fun AuthenticatedDastanWorkspace(
                             ExploreAndCategoriesScreen(
                                 dramas = userDramas,
                                 latestEpisodes = userLatestEpisodes,
+                                hindiUrduDramas = hindiUrduDramas,
+                                hindiUrduLatestEpisodes = hindiUrduLatestEpisodes,
+                                hindiUrduCategories = hindiUrduCategories,
                                 favorites = favorites,
                                 onSelectDrama = { drama ->
                                     val firstSeason = drama.seasons.firstOrNull()?.seasonNumber ?: drama.seasonNumber
@@ -521,6 +611,7 @@ private fun AuthenticatedDastanWorkspace(
                                 onPlayEpisode = { ep ->
                                     val siblings = viewModel.getEpisodesForCategory(
                                         categoryId = ep.categoryId,
+                                        source = ep.source,
                                         includeHidden = false
                                     ).ifEmpty { listOf(ep) }
                                     overlayScreen = ActiveOverlayScreen.VideoPlayer(
@@ -535,7 +626,7 @@ private fun AuthenticatedDastanWorkspace(
                         BottomNavTab.FAVORITES -> {
                             FavoritesScreen(
                                 favorites = favorites,
-                                dramas = userDramas,
+                                dramas = userDramas + hindiUrduDramas,
                                 onSelectDrama = { drama ->
                                     val firstSeason = drama.seasons.firstOrNull()?.seasonNumber ?: drama.seasonNumber
                                     viewModel.loadEpisodesForDrama(drama, seasonNumber = firstSeason)
@@ -555,7 +646,12 @@ private fun AuthenticatedDastanWorkspace(
                                         posterUrl = "",
                                         episodeCount = 0,
                                         seasonNumber = 1,
-                                        genreTags = emptyList()
+                                        genreTags = emptyList(),
+                                        source = if (dramaId.startsWith("dramanitam_")) {
+                                            ContentSource.DRAMANITAM_DUBBED
+                                        } else {
+                                            ContentSource.DRAMA_COLLECTION
+                                        }
                                     )
                                     viewModel.toggleFavorite(dummy)
                                 }
@@ -568,6 +664,7 @@ private fun AuthenticatedDastanWorkspace(
                                 onPlaySavedEpisode = { ep ->
                                     val siblings = viewModel.getEpisodesForCategory(
                                         categoryId = ep.categoryId,
+                                        source = ep.source,
                                         includeHidden = false
                                     ).ifEmpty { listOf(ep) }
                                     overlayScreen = ActiveOverlayScreen.VideoPlayer(

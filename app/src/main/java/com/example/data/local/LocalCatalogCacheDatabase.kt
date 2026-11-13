@@ -10,6 +10,7 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.example.data.model.CacheStats
+import com.example.data.model.ContentSource
 import com.example.data.model.DramaSeason
 import com.example.data.model.DramaSeries
 import com.example.data.model.EpisodeItem
@@ -26,6 +27,10 @@ class LocalCatalogCacheDatabase private constructor(
             """
             CREATE TABLE IF NOT EXISTS cached_dramas (
                 id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL DEFAULT 'giveme5',
+                source_category_name TEXT NOT NULL DEFAULT '',
+                audio_language TEXT NOT NULL DEFAULT 'Urdu Subtitles',
+                episode_portal_url TEXT NOT NULL DEFAULT '',
                 category_id INTEGER NOT NULL,
                 title TEXT NOT NULL,
                 original_title TEXT NOT NULL,
@@ -47,6 +52,9 @@ class LocalCatalogCacheDatabase private constructor(
             """
             CREATE TABLE IF NOT EXISTS cached_episodes (
                 id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL DEFAULT 'giveme5',
+                source_category_name TEXT NOT NULL DEFAULT '',
+                audio_language TEXT NOT NULL DEFAULT 'Urdu Subtitles',
                 post_id INTEGER NOT NULL,
                 category_id INTEGER NOT NULL,
                 drama_title TEXT NOT NULL,
@@ -70,7 +78,7 @@ class LocalCatalogCacheDatabase private constructor(
             """.trimIndent()
         )
         db.execSQL(
-            "CREATE INDEX IF NOT EXISTS idx_episodes_category_season ON cached_episodes(category_id, season_number, episode_number)"
+            "CREATE INDEX IF NOT EXISTS idx_episodes_source_category_season ON cached_episodes(source_id, category_id, season_number, episode_number)"
         )
         db.execSQL(
             """
@@ -111,7 +119,10 @@ class LocalCatalogCacheDatabase private constructor(
     }
 
     @Synchronized
-    fun saveDramas(dramas: List<DramaSeries>) {
+    fun saveDramas(
+        dramas: List<DramaSeries>,
+        source: ContentSource = ContentSource.DRAMA_COLLECTION
+    ) {
         if (dramas.isEmpty()) return
         val contentHash = dramas.joinToString("|") {
             "${it.id}:${it.episodeCount}:${it.posterUrl.hashCode()}:${it.seasons.size}"
@@ -119,9 +130,14 @@ class LocalCatalogCacheDatabase private constructor(
 
         val db = writableDatabase
         val now = System.currentTimeMillis()
+        val metadataKey = if (source == ContentSource.DRAMANITAM_DUBBED) {
+            KEY_DRAMANITAM_DRAMAS
+        } else {
+            KEY_CATALOG_DRAMAS
+        }
         db.beginTransaction()
         try {
-            db.delete("cached_dramas", null, null)
+            db.delete("cached_dramas", "source_id = ?", arrayOf(source.sourceId))
             for (drama in dramas) {
                 val genresArray = JSONArray(drama.genreTags)
                 val seasonsArray = JSONArray().apply {
@@ -134,12 +150,18 @@ class LocalCatalogCacheDatabase private constructor(
                                 put("slug", s.slug)
                                 put("episodeCount", s.episodeCount)
                                 put("hasExplicitSeasonMetadata", s.hasExplicitSeasonMetadata)
+                                put("sourceId", s.source.sourceId)
+                                put("episodePortalUrl", s.episodePortalUrl)
                             }
                         )
                     }
                 }
                 val values = ContentValues().apply {
                     put("id", drama.id)
+                    put("source_id", drama.source.sourceId)
+                    put("source_category_name", drama.sourceCategoryName)
+                    put("audio_language", drama.audioLanguage)
+                    put("episode_portal_url", drama.episodePortalUrl)
                     put("category_id", drama.categoryId)
                     put("title", drama.title)
                     put("original_title", drama.originalTitle)
@@ -157,7 +179,7 @@ class LocalCatalogCacheDatabase private constructor(
                 }
                 db.insertWithOnConflict("cached_dramas", null, values, SQLiteDatabase.CONFLICT_REPLACE)
             }
-            upsertMetadata(db, KEY_CATALOG_DRAMAS, contentHash, now)
+            upsertMetadata(db, metadataKey, contentHash, now)
             db.setTransactionSuccessful()
         } catch (e: Exception) {
             Log.w(TAG, "Failed to persist dramas to SQLite cache: ${e.message}")
@@ -167,15 +189,21 @@ class LocalCatalogCacheDatabase private constructor(
     }
 
     @Synchronized
-    fun getCachedDramas(): List<DramaSeries> {
+    fun getCachedDramas(
+        source: ContentSource = ContentSource.DRAMA_COLLECTION
+    ): List<DramaSeries> {
         val result = mutableListOf<DramaSeries>()
         try {
             readableDatabase.rawQuery(
-                "SELECT * FROM cached_dramas ORDER BY priority_order ASC, episode_count DESC",
-                null
+                "SELECT * FROM cached_dramas WHERE source_id = ? ORDER BY priority_order ASC, episode_count DESC",
+                arrayOf(source.sourceId)
             ).use { cursor ->
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(cursor.getColumnIndexOrThrow("id"))
+                    val sourceId = cursor.getString(cursor.getColumnIndexOrThrow("source_id"))
+                    val sourceCategoryName = cursor.getString(cursor.getColumnIndexOrThrow("source_category_name"))
+                    val audioLanguage = cursor.getString(cursor.getColumnIndexOrThrow("audio_language"))
+                    val episodePortalUrl = cursor.getString(cursor.getColumnIndexOrThrow("episode_portal_url"))
                     val categoryId = cursor.getInt(cursor.getColumnIndexOrThrow("category_id"))
                     val title = cursor.getString(cursor.getColumnIndexOrThrow("title"))
                     val originalTitle = cursor.getString(cursor.getColumnIndexOrThrow("original_title"))
@@ -190,6 +218,7 @@ class LocalCatalogCacheDatabase private constructor(
                     val isFeatured = cursor.getInt(cursor.getColumnIndexOrThrow("is_featured")) == 1
                     val priorityOrder = cursor.getInt(cursor.getColumnIndexOrThrow("priority_order"))
 
+                    val resolvedSource = ContentSource.fromSourceId(sourceId)
                     val genres = mutableListOf<String>()
                     runCatching {
                         val arr = JSONArray(genreTagsJson)
@@ -209,7 +238,9 @@ class LocalCatalogCacheDatabase private constructor(
                                     categoryName = obj.optString("categoryName", title),
                                     slug = obj.optString("slug", slug),
                                     episodeCount = obj.optInt("episodeCount", episodeCount),
-                                    hasExplicitSeasonMetadata = obj.optBoolean("hasExplicitSeasonMetadata", true)
+                                    hasExplicitSeasonMetadata = obj.optBoolean("hasExplicitSeasonMetadata", true),
+                                    source = ContentSource.fromSourceId(obj.optString("sourceId", sourceId)),
+                                    episodePortalUrl = obj.optString("episodePortalUrl", episodePortalUrl)
                                 )
                             )
                         }
@@ -238,16 +269,22 @@ class LocalCatalogCacheDatabase private constructor(
                                         categoryId = categoryId,
                                         categoryName = title,
                                         slug = slug,
-                                        episodeCount = episodeCount
+                                        episodeCount = episodeCount,
+                                        source = resolvedSource,
+                                        episodePortalUrl = episodePortalUrl
                                     )
                                 )
-                            }
+                            },
+                            source = resolvedSource,
+                            sourceCategoryName = sourceCategoryName,
+                            audioLanguage = audioLanguage,
+                            episodePortalUrl = episodePortalUrl
                         )
                     )
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to read cached dramas: ${e.message}")
+            Log.w(TAG, "Failed to read cached dramas for ${source.sourceId}: ${e.message}")
         }
         return result
     }
@@ -259,6 +296,7 @@ class LocalCatalogCacheDatabase private constructor(
         isLatestFeed: Boolean = false
     ) {
         if (episodes.isEmpty()) return
+        val sourceId = episodes.first().source.sourceId
         val contentHash = episodes.joinToString("|") {
             "${it.postId}:${it.seasonNumber}:${it.episodeNumber}:${it.title.hashCode()}"
         }.hashCode().toString()
@@ -268,12 +306,18 @@ class LocalCatalogCacheDatabase private constructor(
         db.beginTransaction()
         try {
             if (isLatestFeed) {
-                db.execSQL("UPDATE cached_episodes SET is_latest_feed = 0 WHERE is_latest_feed = 1")
+                db.execSQL(
+                    "UPDATE cached_episodes SET is_latest_feed = 0 WHERE is_latest_feed = 1 AND source_id = ?",
+                    arrayOf(sourceId)
+                )
             }
             for (ep in episodes) {
                 val backupsJson = JSONArray(ep.backupEmbedUrls).toString()
                 val values = ContentValues().apply {
                     put("id", ep.id)
+                    put("source_id", ep.source.sourceId)
+                    put("source_category_name", ep.sourceCategoryName)
+                    put("audio_language", ep.audioLanguage)
                     put("post_id", ep.postId)
                     put("category_id", ep.categoryId)
                     put("drama_title", ep.dramaTitle)
@@ -306,18 +350,23 @@ class LocalCatalogCacheDatabase private constructor(
     }
 
     @Synchronized
-    fun getCachedLatestEpisodes(): List<EpisodeItem> {
+    fun getCachedLatestEpisodes(
+        source: ContentSource = ContentSource.DRAMA_COLLECTION
+    ): List<EpisodeItem> {
         return queryEpisodes(
-            "SELECT * FROM cached_episodes WHERE is_latest_feed = 1 ORDER BY post_id DESC LIMIT 40",
-            emptyArray()
+            "SELECT * FROM cached_episodes WHERE is_latest_feed = 1 AND source_id = ? ORDER BY post_id DESC LIMIT 40",
+            arrayOf(source.sourceId)
         )
     }
 
     @Synchronized
-    fun getCachedEpisodesForCategory(categoryId: Int): List<EpisodeItem> {
+    fun getCachedEpisodesForCategory(
+        categoryId: Int,
+        source: ContentSource = ContentSource.DRAMA_COLLECTION
+    ): List<EpisodeItem> {
         return queryEpisodes(
-            "SELECT * FROM cached_episodes WHERE category_id = ? ORDER BY season_number ASC, episode_number ASC",
-            arrayOf(categoryId.toString())
+            "SELECT * FROM cached_episodes WHERE source_id = ? AND category_id = ? ORDER BY season_number ASC, episode_number ASC",
+            arrayOf(source.sourceId, categoryId.toString())
         )
     }
 
@@ -327,6 +376,9 @@ class LocalCatalogCacheDatabase private constructor(
             readableDatabase.rawQuery(sql, args).use { cursor ->
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(cursor.getColumnIndexOrThrow("id"))
+                    val sourceId = cursor.getString(cursor.getColumnIndexOrThrow("source_id"))
+                    val sourceCategoryName = cursor.getString(cursor.getColumnIndexOrThrow("source_category_name"))
+                    val audioLanguage = cursor.getString(cursor.getColumnIndexOrThrow("audio_language"))
                     val postId = cursor.getInt(cursor.getColumnIndexOrThrow("post_id"))
                     val categoryId = cursor.getInt(cursor.getColumnIndexOrThrow("category_id"))
                     val dramaTitle = cursor.getString(cursor.getColumnIndexOrThrow("drama_title"))
@@ -374,7 +426,10 @@ class LocalCatalogCacheDatabase private constructor(
                             isPlayable = isPlayable,
                             hasMissingPoster = posterUrl.isBlank(),
                             hasMissingVideo = primaryEmbedUrl.isBlank(),
-                            hasExplicitSeason = hasExplicitSeason
+                            hasExplicitSeason = hasExplicitSeason,
+                            source = ContentSource.fromSourceId(sourceId),
+                            sourceCategoryName = sourceCategoryName,
+                            audioLanguage = audioLanguage
                         )
                     )
                 }
@@ -402,9 +457,11 @@ class LocalCatalogCacheDatabase private constructor(
         var lastUpdated = 0L
 
         try {
-            val dramas = getCachedDramas()
-            dramasCount = dramas.size
-            seasonsCount = dramas.sumOf { it.seasons.size }
+            val dramasCollection = getCachedDramas(ContentSource.DRAMA_COLLECTION)
+            val dramasNitam = getCachedDramas(ContentSource.DRAMANITAM_DUBBED)
+            val allDramas = dramasCollection + dramasNitam
+            dramasCount = allDramas.size
+            seasonsCount = allDramas.sumOf { it.seasons.size }
 
             readableDatabase.rawQuery("SELECT COUNT(*) FROM cached_episodes", null).use { c ->
                 if (c.moveToFirst()) episodesCount = c.getInt(0)
@@ -465,8 +522,9 @@ class LocalCatalogCacheDatabase private constructor(
     companion object {
         private const val TAG = "LocalCatalogCacheDB"
         private const val DB_NAME = "dastan_catalog_cache.db"
-        private const val DB_VERSION = 2
-        const val KEY_CATALOG_DRAMAS = "catalog_dramas_v2"
+        private const val DB_VERSION = 3
+        const val KEY_CATALOG_DRAMAS = "catalog_dramas_v3"
+        const val KEY_DRAMANITAM_DRAMAS = "dramanitam_dramas_v3"
         const val DEFAULT_TTL_MS = 30 * 60 * 1000L // 30 minutes TTL
         const val IMAGE_CACHE_DIR = "dastan_coil_image_cache"
         const val HTTP_CACHE_DIR = "dastan_okhttp_http_cache"
