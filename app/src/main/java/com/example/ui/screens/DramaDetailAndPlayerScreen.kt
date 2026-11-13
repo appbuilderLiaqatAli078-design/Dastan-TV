@@ -688,7 +688,7 @@ private fun EpisodeListRow(
     }
 }
 
-private class DastanPlayerJsBridge(
+class DastanPlayerJsBridge(
     private val mainHandler: Handler,
     private val onTelemetry: (
         state: String,
@@ -934,7 +934,7 @@ private fun loadStreamUrlIntoWebView(webView: WebView, rawUrl: String) {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
 @Composable
 fun VideoPlayerScreen(
     episode: EpisodeItem,
@@ -1175,7 +1175,7 @@ fun VideoPlayerScreen(
                     )
                 }
             } else {
-                val jsBridge = remember(episode.id) {
+                val jsBridge: DastanPlayerJsBridge = remember(episode.id) {
                     DastanPlayerJsBridge(
                         mainHandler = mainHandler,
                         onTelemetry = { state, posSec, durSec, muted, vw, vh, _ ->
@@ -1226,7 +1226,6 @@ fun VideoPlayerScreen(
                             settings.apply {
                                 javaScriptEnabled = true
                                 domStorageEnabled = true
-                                databaseEnabled = true
                                 mediaPlaybackRequiresUserGesture = false
                                 loadWithOverviewMode = true
                                 useWideViewPort = true

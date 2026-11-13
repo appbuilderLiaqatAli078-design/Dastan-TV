@@ -433,6 +433,7 @@ class LocalCatalogCacheDatabase private constructor(
         )
     }
 
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     @Synchronized
     fun clearAllLocalCaches(context: Context) {
         try {
