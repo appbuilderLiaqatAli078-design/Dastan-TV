@@ -78,6 +78,8 @@ import com.example.ui.theme.OttomanGoldAccent
 import com.example.ui.theme.PrimaryWhiteText
 import com.example.ui.theme.RoyalVioletAccent
 import com.example.ui.theme.SecondaryMutedText
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
 import kotlinx.coroutines.delay
 
 @Composable
@@ -356,19 +358,15 @@ fun AuthScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val credentialManager = remember { CredentialManager.create(context) }
+    val credentialManager = remember(context) { CredentialManager.create(context) }
 
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
-        GoogleAuthHelper.attemptAutoSignIn(
-            context = context,
-            credentialManager = credentialManager,
-            onAuthSuccess = onAuthSuccess,
-            onUnauthenticated = { /* Stay on interactive sign-in screen */ },
-            scope = scope
-        )
+        if (com.google.firebase.Firebase.auth.currentUser != null) {
+            onAuthSuccess()
+        }
     }
 
     Box(
@@ -496,6 +494,7 @@ fun AuthScreen(
 
                     Button(
                         onClick = {
+                            if (isLoading) return@Button
                             errorMessage = null
                             isLoading = true
                             GoogleAuthHelper.onGoogleSignInClicked(
@@ -503,6 +502,7 @@ fun AuthScreen(
                                 credentialManager = credentialManager,
                                 onAuthSuccess = {
                                     isLoading = false
+                                    errorMessage = null
                                     onAuthSuccess()
                                 },
                                 onAuthError = { msg ->

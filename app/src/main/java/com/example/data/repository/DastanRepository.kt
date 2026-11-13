@@ -83,6 +83,11 @@ class DastanRepository(private val db: FirebaseFirestore) {
                 adminDocExists ||
                 isAuthorizedAdminEmail(user.email, user.isEmailVerified)
 
+            val email = (user.email ?: "viewer@dastantv.app").take(200)
+            val googleDisplayName = (user.displayName?.takeIf { it.isNotBlank() }
+                ?: email.substringBefore("@").ifBlank { "Dastan Viewer" }).take(100)
+            val googlePhotoUrl = (user.photoUrl?.toString() ?: "").take(500)
+
             val existingSnap = docRef.get().await()
             if (existingSnap.exists()) {
                 val profile = existingSnap.toObject(
@@ -90,34 +95,41 @@ class DastanRepository(private val db: FirebaseFirestore) {
                     DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                 ) ?: UserProfile(userId = uid)
 
-                if (isVerifiedAdmin && profile.role != "admin") {
-                    docRef.update(
-                        mapOf(
-                            "role" to "admin",
-                            "membershipPlan" to "YEARLY_VIP",
-                            "updatedAt" to FieldValue.serverTimestamp()
-                        )
-                    ).await()
-                    return@runCatching profile.copy(
-                        id = uid,
-                        role = "admin",
-                        membershipPlan = "YEARLY_VIP"
-                    )
+                val resolvedDisplayName = profile.displayName.ifBlank { googleDisplayName }.take(100)
+                val resolvedPhotoUrl = googlePhotoUrl.ifBlank { profile.photoUrl }.take(500)
+                val resolvedRole = if (isVerifiedAdmin) "admin" else profile.role.ifBlank { "user" }
+                val resolvedPlan = if (isVerifiedAdmin) "YEARLY_VIP" else profile.membershipPlan.ifBlank { "FREE" }
+
+                val updates = mutableMapOf<String, Any>(
+                    "email" to email,
+                    "displayName" to resolvedDisplayName,
+                    "photoUrl" to resolvedPhotoUrl,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                if (isVerifiedAdmin && (profile.role != "admin" || profile.membershipPlan != "YEARLY_VIP")) {
+                    updates["role"] = "admin"
+                    updates["membershipPlan"] = "YEARLY_VIP"
                 }
-                return@runCatching profile.copy(id = uid)
+
+                docRef.update(updates).await()
+                return@runCatching profile.copy(
+                    id = uid,
+                    userId = uid,
+                    email = email,
+                    displayName = resolvedDisplayName,
+                    photoUrl = resolvedPhotoUrl,
+                    role = resolvedRole,
+                    membershipPlan = resolvedPlan
+                )
             } else {
                 val assignedRole = if (isVerifiedAdmin) "admin" else "user"
                 val assignedPlan = if (isVerifiedAdmin) "YEARLY_VIP" else "FREE"
-                val email = (user.email ?: "viewer@dastantv.app").take(200)
-                val displayName = (user.displayName?.takeIf { it.isNotBlank() }
-                    ?: email.substringBefore("@").ifBlank { "Dastan Viewer" }).take(100)
-                val photoUrl = (user.photoUrl?.toString() ?: "").take(500)
 
                 val payload = mapOf(
                     "userId" to uid,
                     "email" to email,
-                    "displayName" to displayName,
-                    "photoUrl" to photoUrl,
+                    "displayName" to googleDisplayName,
+                    "photoUrl" to googlePhotoUrl,
                     "role" to assignedRole,
                     "membershipPlan" to assignedPlan,
                     "preferredQuality" to "AUTO",
@@ -131,8 +143,8 @@ class DastanRepository(private val db: FirebaseFirestore) {
                     id = uid,
                     userId = uid,
                     email = email,
-                    displayName = displayName,
-                    photoUrl = photoUrl,
+                    displayName = googleDisplayName,
+                    photoUrl = googlePhotoUrl,
                     role = assignedRole,
                     membershipPlan = assignedPlan,
                     preferredQuality = "AUTO",

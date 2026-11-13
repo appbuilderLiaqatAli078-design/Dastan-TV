@@ -134,7 +134,12 @@ fun DastanRootApp(
 
     DisposableEffect(Unit) {
         val listener = FirebaseAuth.AuthStateListener { auth ->
-            currentUser = auth.currentUser
+            val updatedUser = auth.currentUser
+            currentUser = updatedUser
+            if (updatedUser != null) {
+                hasCompletedOnboarding = true
+                showSplash = false
+            }
         }
         Firebase.auth.addAuthStateListener(listener)
         onDispose {
@@ -152,6 +157,8 @@ fun DastanRootApp(
         currentUser == null -> {
             AuthScreen(
                 onAuthSuccess = {
+                    hasCompletedOnboarding = true
+                    showSplash = false
                     currentUser = Firebase.auth.currentUser
                 }
             )
@@ -215,8 +222,8 @@ private fun AuthenticatedDastanWorkspace(
         onUpdateFlagSecure(flagSecureEnabled)
     }
 
-    var selectedTab by rememberSaveable { mutableStateOf(BottomNavTab.HOME) }
-    var overlayScreen by remember { mutableStateOf<ActiveOverlayScreen>(ActiveOverlayScreen.None) }
+    var selectedTab by rememberSaveable(currentUserId) { mutableStateOf(BottomNavTab.HOME) }
+    var overlayScreen by remember(currentUserId) { mutableStateOf<ActiveOverlayScreen>(ActiveOverlayScreen.None) }
 
     val isUserVipOrAdmin = isAdmin || userProfile?.membershipPlan == "YEARLY_VIP"
 

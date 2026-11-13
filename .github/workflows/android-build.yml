@@ -29,16 +29,19 @@ jobs:
       - name: Setup Gradle Cache
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Decode or Generate Debug Keystore for CI
+      - name: Restore Registered Firebase OAuth Debug Keystore for CI
         run: |
           if [ -f debug.keystore.base64 ]; then
             base64 -d debug.keystore.base64 > debug.keystore
-          elif [ ! -f debug.keystore ]; then
-            keytool -genkeypair -v -keystore debug.keystore -alias androiddebugkey \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass android -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US"
+          else
+            # Restore the exact keystore whose SHA-1 (5B:84:C6:36:7A:BA:C7:6E:C1:97:67:B4:40:5D:BB:1C:44:34:18:4E)
+            # and SHA-256 (C4:F0:F4:5A:99:76:90:A9:4E:D9:32:59:5A:8F:01:B6:B5:CD:BE:9D:AE:80:15:6A:CE:1B:2B:33:BB:E4:51:3F)
+            # are registered in Firebase / Google Cloud OAuth for com.aistudio.dastantv.mrvkpx
+            cat << 'EOF' | tr -d '\n\r ' | base64 -d > debug.keystore
+          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
+          EOF
           fi
+          keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1:|SHA256:"
 
       - name: Prepare Firebase Configuration for CI
         env:
@@ -156,6 +159,7 @@ jobs:
             ## Dastan TV - Premium Turkish Drama OTT (Build #${{ github.run_number }})
             - **Developer:** Liaquat Ali
             - **Package ID:** `com.aistudio.dastantv.mrvkpx`
+            - **OAuth Signing SHA-1:** `5B:84:C6:36:7A:BA:C7:6E:C1:97:67:B4:40:5D:BB:1C:44:34:18:4E`
             - **Direct APK Download:** Download `Dastan-TV-latest.apk` or `Dastan-TV-v1.0.${{ github.run_number }}.apk` below to install on Android devices.
           files: |
             release-assets/*.apk
